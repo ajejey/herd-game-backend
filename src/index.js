@@ -60,31 +60,44 @@ io.on('connection', (socket) => {
 
   // Create game room
   socket.on('create_game', async ({ username }) => {
+    console.log('Received create_game request:', { username, socketId: socket.id });
     try {
       const roomCode = await Game.generateRoomCode();
+      console.log('Generated room code:', roomCode);
+
       const game = new Game({
         roomCode,
         hostId: socket.id,
         status: 'waiting'
       });
       await game.save();
+      console.log('Game created:', { gameId: game._id, roomCode });
 
       const host = new Player({
         gameId: game._id,
         username,
         isHost: true,
-        socketId: socket.id
+        socketId: socket.id,
+        isConnected: true
       });
       await host.save();
+      console.log('Host player created:', { playerId: host._id, username });
 
       socket.join(roomCode);
+      console.log('Socket joined room:', roomCode);
+
       socket.emit('game_created', { 
         gameId: game._id,
         roomCode,
-        playerId: socket.id
+        playerId: host._id
       });
+      console.log('Emitted game_created event');
     } catch (error) {
-      socket.emit('error', { message: 'Failed to create game' });
+      console.error('Error creating game:', error);
+      socket.emit('error', { 
+        message: 'Failed to create game',
+        details: error.message 
+      });
     }
   });
 
