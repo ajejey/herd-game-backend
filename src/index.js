@@ -216,8 +216,17 @@ io.on('connection', (socket) => {
   // Submit answer
   socket.on('submit_answer', async ({ gameId, answer }) => {
     try {
-      const game = await Game.findById(gameId);
-      if (!game || game.status !== 'in-progress') {
+      // Use findOneAndUpdate to atomically check game state
+      const game = await Game.findOneAndUpdate(
+        { 
+          _id: gameId, 
+          status: 'in-progress'
+        },
+        { $inc: { playersAnswered: 1 } },
+        { new: true }
+      );
+
+      if (!game) {
         socket.emit('error', { message: 'Invalid game state' });
         return;
       }
@@ -244,61 +253,36 @@ io.on('connection', (socket) => {
       });
       await newAnswer.save();
 
-      // Update players answered count
-      game.playersAnswered += 1;
-      await game.save();
-
-      // Notify all players about the new answer (without showing the answer)
-      io.to(game.roomCode).emit('player_answered', {
-        username: player.username,
-        playersAnswered: game.playersAnswered
+      // Get total number of connected players
+      const connectedPlayers = await Player.countDocuments({ 
+        gameId, 
+        isConnected: true 
       });
 
-      // If all players have answered, analyze results
-      const players = await Player.find({ gameId });
-      if (game.playersAnswered === players.length) {
+      // Notify all players about the new answer count
+      io.to(game.roomCode).emit('player_answered', {
+        playersAnswered: game.playersAnswered,
+        totalPlayers: connectedPlayers
+      });
+
+      // Check if all players have answered
+      if (game.playersAnswered >= connectedPlayers) {
         const results = await analyzeRoundAnswers(round._id);
+        const pinkCowHolder = await determinePinkCowHolder(results);
         
-        // Update scores and pink cow
-        const newPinkCowHolder = determinePinkCowHolder(game.pinkCowHolder, results.uniqueAnswerPlayer);
-        
-        // Update player scores
-        for (const playerId of results.scoringPlayers) {
-          await Player.findByIdAndUpdate(playerId, { $inc: { score: 1 } });
-        }
-
-        // Update game state
-        game.pinkCowHolder = newPinkCowHolder;
-        game.playersAnswered = 0;
-        await game.save();
-
-        // Mark round as completed
-        round.status = 'completed';
-        round.majorityAnswer = results.majorityAnswer;
-        round.uniqueAnswerPlayer = results.uniqueAnswerPlayer;
-        await round.save();
-
-        // Get updated player states
-        const updatedPlayers = await Player.find({ gameId });
-        
-        // Check for winner
-        const winner = updatedPlayers.find(p => checkWinCondition(p, newPinkCowHolder));
-
-        // Send round results to all players
-        io.to(game.roomCode).emit('round_completed', {
-          results,
-          players: updatedPlayers,
-          pinkCowHolder: newPinkCowHolder,
-          winner
+        // Update game with new pink cow holder
+        await Game.findByIdAndUpdate(gameId, {
+          pinkCowHolder,
+          playersAnswered: 0 // Reset for next round
         });
 
-        // If there's a winner, end the game
-        if (winner) {
-          game.status = 'completed';
-          await game.save();
-        }
+        io.to(game.roomCode).emit('round_completed', {
+          results,
+          pinkCowHolder
+        });
       }
     } catch (error) {
+      console.error('Submit answer error:', error);
       socket.emit('error', { message: 'Failed to submit answer' });
     }
   });
