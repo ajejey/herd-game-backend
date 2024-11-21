@@ -267,19 +267,53 @@ io.on('connection', (socket) => {
 
       // Check if all players have answered
       if (game.playersAnswered >= connectedPlayers) {
-        const results = await analyzeRoundAnswers(round._id);
-        const pinkCowHolder = await determinePinkCowHolder(results);
-        
-        // Update game with new pink cow holder
-        await Game.findByIdAndUpdate(gameId, {
-          pinkCowHolder,
-          playersAnswered: 0 // Reset for next round
-        });
+        try {
+          // Analyze round results
+          const results = await analyzeRoundAnswers(round._id);
+          
+          // Determine new pink cow holder
+          const newPinkCowHolder = determinePinkCowHolder(
+            game.pinkCowHolder,
+            results.uniqueAnswerPlayer
+          );
 
-        io.to(game.roomCode).emit('round_completed', {
-          results,
-          pinkCowHolder
-        });
+          // Update scores for players with majority answer
+          if (results.scoringPlayers.length > 0) {
+            await Player.updateMany(
+              { _id: { $in: results.scoringPlayers } },
+              { $inc: { score: 1 } }
+            );
+          }
+
+          // Update game state atomically
+          await Game.findByIdAndUpdate(gameId, {
+            pinkCowHolder: newPinkCowHolder,
+            playersAnswered: 0
+          });
+
+          // Get updated player states
+          const updatedPlayers = await Player.find({ gameId });
+
+          // Send round results to all players
+          io.to(game.roomCode).emit('round_completed', {
+            results,
+            pinkCowHolder: newPinkCowHolder,
+            players: updatedPlayers
+          });
+
+          // Check for winner
+          const winner = updatedPlayers.find(p => 
+            p.score >= 8 && p._id.toString() !== newPinkCowHolder
+          );
+
+          if (winner) {
+            await Game.findByIdAndUpdate(gameId, { status: 'completed' });
+            io.to(game.roomCode).emit('game_completed', { winner });
+          }
+        } catch (error) {
+          console.error('Round completion error:', error);
+          socket.emit('error', { message: 'Error completing round' });
+        }
       }
     } catch (error) {
       console.error('Submit answer error:', error);

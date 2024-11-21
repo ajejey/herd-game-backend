@@ -58,11 +58,11 @@ export async function analyzeRoundAnswers(roundId) {
  */
 export function determinePinkCowHolder(currentHolder, uniqueAnswerPlayer) {
   // If there's exactly one unique answer and it's from a different player
-  if (uniqueAnswerPlayer && uniqueAnswerPlayer !== currentHolder) {
-    return uniqueAnswerPlayer;
+  if (uniqueAnswerPlayer && uniqueAnswerPlayer.toString() !== (currentHolder || '').toString()) {
+    return uniqueAnswerPlayer.toString();
   }
   // Otherwise, pink cow stays where it is
-  return currentHolder;
+  return currentHolder ? currentHolder.toString() : null;
 }
 
 /**
