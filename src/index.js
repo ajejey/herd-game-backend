@@ -301,12 +301,22 @@ io.on('connection', (socket) => {
             players: updatedPlayers
           });
 
-          // Check for winner
-          const winner = updatedPlayers.find(p => 
-            p.score >= 8 && p._id.toString() !== newPinkCowHolder
+          // Find all players with 8 or more points
+          const playersWithEightPoints = updatedPlayers.filter(p => p.score >= 8);
+          
+          // Only declare winner if:
+          // 1. There's at least one player with 8 points who doesn't have the pink cow
+          // 2. OR if multiple players have 8 points (even if one has pink cow)
+          const potentialWinners = playersWithEightPoints.filter(p => 
+            p._id.toString() !== newPinkCowHolder
           );
 
-          if (winner) {
+          if (potentialWinners.length > 0) {
+            // Get the player with the highest score among potential winners
+            const winner = potentialWinners.reduce((prev, current) => 
+              (prev.score > current.score) ? prev : current
+            );
+            
             await Game.findByIdAndUpdate(gameId, { status: 'completed' });
             io.to(game.roomCode).emit('game_completed', { winner });
           }
@@ -375,6 +385,67 @@ io.on('connection', (socket) => {
       io.to(game.roomCode).emit('players_updated', { players });
     } catch (error) {
       socket.emit('error', { message: 'Failed to remove player' });
+    }
+  });
+
+  // Handle reconnection
+  socket.on('reconnect_game', async ({ gameId, roomCode, username }) => {
+    try {
+      const game = await Game.findOne({ _id: gameId, roomCode });
+      if (!game) {
+        socket.emit('reconnect_failed', { reason: 'Game not found' });
+        return;
+      }
+
+      // Find the disconnected player
+      const player = await Player.findOne({
+        gameId,
+        username,
+        isConnected: false
+      });
+
+      if (!player) {
+        socket.emit('reconnect_failed', { reason: 'Player not found or already connected' });
+        return;
+      }
+
+      // Update player connection
+      player.socketId = socket.id;
+      player.isConnected = true;
+      await player.save();
+
+      // Join socket room
+      socket.join(game.roomCode);
+
+      // Get current game state
+      const players = await Player.find({ gameId: game._id });
+      const currentRound = await Round.findOne({
+        gameId: game._id,
+        roundNumber: game.currentRound
+      });
+
+      const playersAnswered = currentRound ? await Answer.countDocuments({ roundId: currentRound._id }) : 0;
+
+      // Send game state to reconnecting player
+      socket.emit('game_rejoined', {
+        gameId: game._id,
+        playerId: player._id,
+        roomCode: game.roomCode,
+        gameState: {
+          currentRound: game.currentRound,
+          currentQuestion: game.currentQuestion,
+          players,
+          pinkCowHolder: game.pinkCowHolder,
+          playersAnswered
+        }
+      });
+
+      // Notify others
+      io.to(game.roomCode).emit('players_updated', { players });
+
+    } catch (error) {
+      console.error('Reconnection error:', error);
+      socket.emit('reconnect_failed', { reason: 'Server error during reconnection' });
     }
   });
 
