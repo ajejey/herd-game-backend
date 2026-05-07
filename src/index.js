@@ -1,3 +1,10 @@
+// Local-only DNS override for Windows machines whose ISP DNS blocks Atlas SRV records.
+// In production (Railway/Vercel), the host's own DNS resolves Mongo SRV fine, so we skip it.
+import dns from 'dns';
+if (process.env.NODE_ENV !== 'production') {
+  dns.setServers(['1.1.1.1', '8.8.8.8']);
+}
+
 import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
@@ -366,6 +373,44 @@ io.on('connection', (socket) => {
       socket.emit('error', { message: 'Failed to start next round' });
     }
   });
+
+  // ───── Host manual score adjustment (Path B / Just-One-style override) ─────
+  socket.on('adjust_score', async ({ gameId, playerId, delta }) => {
+    try {
+      if (delta !== 1 && delta !== -1) return;
+
+      const game = await Game.findById(gameId);
+      if (!game || game.status !== 'in-progress') return;
+      if (game.hostId !== socket.id) {
+        socket.emit('error', { message: 'Only host can adjust scores' });
+        return;
+      }
+
+      const target = await Player.findOne({ _id: playerId, gameId });
+      if (!target) return;
+
+      const newScore = Math.max(0, (target.score || 0) + delta);
+      target.score = newScore;
+      await target.save();
+
+      const players = await Player.find({ gameId });
+      io.to(game.roomCode).emit('players_updated', { players });
+
+      // Re-run win check after adjustment
+      const eligibleWinners = players.filter(
+        p => p.score >= 8 && p._id.toString() !== (game.pinkCowHolder || '').toString()
+      );
+      if (eligibleWinners.length > 0) {
+        const winner = eligibleWinners.reduce((a, b) => (a.score > b.score ? a : b));
+        await Game.findByIdAndUpdate(gameId, { status: 'completed' });
+        io.to(game.roomCode).emit('game_completed', { winner });
+      }
+    } catch (error) {
+      console.error('adjust_score error:', error);
+      socket.emit('error', { message: 'Failed to adjust score' });
+    }
+  });
+  // ───── end Path B ─────
 
   // Remove player (host only)
   socket.on('remove_player', async ({ gameId, playerId }) => {
