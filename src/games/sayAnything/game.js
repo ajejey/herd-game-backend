@@ -1,5 +1,5 @@
 import { getRandomQuestions } from './questions.js';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'crypto';
 
 /*
   Say Anything — round phases:
@@ -77,7 +77,7 @@ export const SayAnythingGame = {
 
         const answers = [
           ...state.round.answers,
-          { id: uuidv4(), playerId: player.id, username: player.username, text },
+          { id: randomUUID(), playerId: player.id, username: player.username, text },
         ];
 
         // Auto-advance to judging when all connected non-judges have answered

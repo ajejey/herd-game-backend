@@ -1,4 +1,4 @@
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'crypto';
 import * as store from './store.js';
 
 const HOST_MIGRATION_DELAY_MS = 20_000; // migrate host after 20s offline
@@ -48,7 +48,7 @@ export function mountGame(io, namespacePath, gameDef) {
       }
 
       const roomCode = store.generateRoomCode();
-      const playerId = uuidv4();
+      const playerId = randomUUID();
       const rejoinToken = store.generateToken();
 
       const player = {
@@ -142,7 +142,7 @@ export function mountGame(io, namespacePath, gameDef) {
         return emitError(socket, 'That name is already taken in this room.', 'USERNAME_TAKEN');
       }
 
-      const playerId = uuidv4();
+      const playerId = randomUUID();
       const newToken = store.generateToken();
 
       const player = {
