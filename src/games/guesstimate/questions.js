@@ -1,0 +1,180 @@
+/*
+  Guesstimate question bank — every question has a numerical answer.
+  Mix of difficulty levels: some everyone roughly knows, some require wild guesses.
+  All family-safe. All original phrasing (the facts are public domain).
+*/
+
+export const questions = [
+  // ── Human body ─────────────────────────────────────────
+  { q: "How many bones does an adult human body have?", a: 206 },
+  { q: "How many teeth does a typical adult have (including wisdom teeth)?", a: 32 },
+  { q: "How many chambers does a human heart have?", a: 4 },
+  { q: "Roughly how many times does an average human heart beat per day?", a: 100000 },
+  { q: "How many muscles are used to smile (commonly cited)?", a: 17 },
+  { q: "How many bones are in a human hand (including the wrist)?", a: 27 },
+  { q: "How many liters of blood does an average adult body contain?", a: 5 },
+  { q: "How long is the average human small intestine, in feet?", a: 22 },
+  { q: "How many pairs of ribs does a human typically have?", a: 12 },
+  { q: "How many taste buds does an average human tongue have, in thousands?", a: 10 },
+
+  // ── Geography ─────────────────────────────────────────
+  { q: "How many countries are recognized in Africa?", a: 54 },
+  { q: "How many US states border Canada?", a: 13 },
+  { q: "How many time zones does Russia span?", a: 11 },
+  { q: "How many countries are in the European Union (as of 2024)?", a: 27 },
+  { q: "How many oceans does Earth have (per modern classification)?", a: 5 },
+  { q: "What is the area of Texas in thousand square miles (approx)?", a: 268 },
+  { q: "How tall is Mount Everest in feet?", a: 29032 },
+  { q: "How long is the Nile River in miles?", a: 4132 },
+  { q: "How many Great Lakes are there?", a: 5 },
+  { q: "How many countries border Brazil?", a: 10 },
+  { q: "How many countries border China?", a: 14 },
+  { q: "How many UNESCO World Heritage Sites are in Italy (most of any country)?", a: 60 },
+  { q: "How tall is the Eiffel Tower in feet (to the top)?", a: 1083 },
+  { q: "How many countries have access to the sea?", a: 152 },
+  { q: "How many Hawaiian islands make up the main chain?", a: 8 },
+
+  // ── Movies / Entertainment ─────────────────────────────────────────
+  { q: "How many Oscars did Titanic (1997) win?", a: 11 },
+  { q: "How long is the Lord of the Rings: Return of the King extended cut, in minutes?", a: 263 },
+  { q: "How many films were in the Harry Potter series?", a: 8 },
+  { q: "How many seasons did Friends run?", a: 10 },
+  { q: "How many episodes were in The Office (US)?", a: 201 },
+  { q: "What year was the first iPhone released?", a: 2007 },
+  { q: "How many Star Wars films are in the main Skywalker saga?", a: 9 },
+  { q: "How many Marvel Cinematic Universe films were released by end of Phase Three?", a: 23 },
+  { q: "How many keys are on a standard piano?", a: 88 },
+  { q: "How many strings does a standard guitar have?", a: 6 },
+  { q: "How many seasons did Breaking Bad run?", a: 5 },
+  { q: "How long was the original Toy Story film, in minutes?", a: 81 },
+  { q: "What year did Pixar release the first Toy Story?", a: 1995 },
+  { q: "How many Bond films starred Sean Connery (excluding Never Say Never Again)?", a: 6 },
+  { q: "How many Pixar feature films were released by 2024?", a: 28 },
+
+  // ── Sports ─────────────────────────────────────────
+  { q: "How many players are on a soccer team on the field at one time?", a: 11 },
+  { q: "How many players are on a basketball team on the court at one time?", a: 5 },
+  { q: "How many innings are in a standard baseball game?", a: 9 },
+  { q: "How many laps are in the Indianapolis 500?", a: 200 },
+  { q: "How long is a marathon, in miles (to the nearest mile)?", a: 26 },
+  { q: "How many holes are in a standard round of golf?", a: 18 },
+  { q: "How many minutes are in a regulation soccer match (not counting stoppage)?", a: 90 },
+  { q: "How many Super Bowls had the Patriots won by the end of 2023?", a: 6 },
+  { q: "How many World Cups had Brazil won by 2024?", a: 5 },
+  { q: "How wide is a basketball hoop in inches?", a: 18 },
+  { q: "How many players make up a cricket team on the field?", a: 11 },
+  { q: "How long is an NBA basketball game, in minutes (regulation)?", a: 48 },
+  { q: "How many tennis grand slams are there per year?", a: 4 },
+  { q: "What's the maximum score in 10-pin bowling?", a: 300 },
+  { q: "How many points is a touchdown worth in American football?", a: 6 },
+
+  // ── Animals / Nature ─────────────────────────────────────────
+  { q: "How many legs does a spider have?", a: 8 },
+  { q: "How many hearts does an octopus have?", a: 3 },
+  { q: "How long can a giant tortoise live, in years (record)?", a: 188 },
+  { q: "How tall is an average adult giraffe in feet?", a: 18 },
+  { q: "How fast can a cheetah run in miles per hour (top speed)?", a: 70 },
+  { q: "How many bones does a snake have (on average)?", a: 400 },
+  { q: "How many years does an average elephant live?", a: 60 },
+  { q: "How many species of penguin are there?", a: 18 },
+  { q: "How long is an average blue whale, in feet?", a: 82 },
+  { q: "How many wings does a bee have?", a: 4 },
+  { q: "How many eyes does a bee have?", a: 5 },
+  { q: "How many bones does a shark have (cartilage doesn't count)?", a: 0 },
+  { q: "How many stomachs does a cow have?", a: 4 },
+  { q: "How long can a snail sleep, in years?", a: 3 },
+  { q: "What is the wingspan of a wandering albatross, in feet?", a: 11 },
+
+  // ── Science / Space ─────────────────────────────────────────
+  { q: "How many planets are in our solar system (since Pluto was demoted)?", a: 8 },
+  { q: "How many moons does Mars have?", a: 2 },
+  { q: "How many moons does Jupiter have (confirmed by 2024)?", a: 95 },
+  { q: "How many elements are in the periodic table (as of 2024)?", a: 118 },
+  { q: "What is the speed of light in millions of meters per second (rounded)?", a: 300 },
+  { q: "How many minutes does sunlight take to reach Earth (roughly)?", a: 8 },
+  { q: "How old is the Earth, in billions of years?", a: 4 },
+  { q: "How many bones are in the human spine (vertebrae)?", a: 33 },
+  { q: "How many degrees Fahrenheit does water boil at, at sea level?", a: 212 },
+  { q: "How many degrees Celsius does water freeze at?", a: 0 },
+  { q: "What is the atomic number of gold?", a: 79 },
+  { q: "How many natural satellites (moons) does Saturn have (confirmed by 2024)?", a: 146 },
+  { q: "What year did humans first walk on the Moon?", a: 1969 },
+  { q: "How long is one Mars day in Earth hours (rounded)?", a: 25 },
+  { q: "How many constellations are officially recognized?", a: 88 },
+
+  // ── History ─────────────────────────────────────────
+  { q: "What year did World War II end?", a: 1945 },
+  { q: "What year was the US Declaration of Independence signed?", a: 1776 },
+  { q: "How many US presidents have served (through Biden)?", a: 46 },
+  { q: "What year did the Titanic sink?", a: 1912 },
+  { q: "What year did the Berlin Wall fall?", a: 1989 },
+  { q: "How many wives did Henry VIII have?", a: 6 },
+  { q: "How many original Star-Spangled Banner stripes are there?", a: 13 },
+  { q: "How many original US colonies were there?", a: 13 },
+  { q: "What year was the first modern Olympic Games held?", a: 1896 },
+  { q: "How many years did the Hundred Years' War actually last?", a: 116 },
+  { q: "What year did the Roman Empire fall (Western)?", a: 476 },
+  { q: "What year did the French Revolution begin?", a: 1789 },
+  { q: "How many people signed the US Declaration of Independence?", a: 56 },
+  { q: "What year did the first World War start?", a: 1914 },
+  { q: "How many years did Queen Elizabeth II reign?", a: 70 },
+
+  // ── Food / Pop ─────────────────────────────────────────
+  { q: "How many calories are in a Big Mac (USA)?", a: 540 },
+  { q: "How many flavors does Baskin-Robbins originally promise?", a: 31 },
+  { q: "How many slices in a standard large Domino's pizza?", a: 8 },
+  { q: "How many bubbles are in a glass of champagne (estimated, in millions)?", a: 1 },
+  { q: "How many chickens are eaten per second worldwide (roughly)?", a: 2000 },
+  { q: "How many Starbucks locations are there globally (approx, 2024)?", a: 38000 },
+  { q: "How many McDonald's locations are there globally (approx, 2024)?", a: 40000 },
+  { q: "How many ounces are in a Venti Starbucks drink?", a: 20 },
+  { q: "How many calories are roughly in a banana?", a: 105 },
+  { q: "How many varieties of apples exist worldwide (approx)?", a: 7500 },
+  { q: "How many cups in a US gallon?", a: 16 },
+  { q: "How many Skittles are in a regular share-size bag (roughly)?", a: 56 },
+  { q: "How many seeds does an average strawberry have (on outside)?", a: 200 },
+
+  // ── Tech / Internet ─────────────────────────────────────────
+  { q: "What year was Google founded?", a: 1998 },
+  { q: "What year was Facebook (now Meta) launched?", a: 2004 },
+  { q: "How many emojis exist (Unicode 15.0, 2022)?", a: 3664 },
+  { q: "What year was the World Wide Web invented?", a: 1989 },
+  { q: "How many characters were in an original Twitter post?", a: 140 },
+  { q: "What year did YouTube launch?", a: 2005 },
+  { q: "How many active users does WhatsApp have (in billions, 2024)?", a: 2 },
+  { q: "How many minutes of video are uploaded to YouTube per minute (approx)?", a: 500 },
+  { q: "What year did Wikipedia launch?", a: 2001 },
+  { q: "What year was the first website published?", a: 1991 },
+  { q: "How many Apple App Store apps are there (millions, 2024)?", a: 2 },
+  { q: "What year was the iPad released?", a: 2010 },
+
+  // ── Random fun ─────────────────────────────────────────
+  { q: "How many words are in the King James Bible (approx, in thousands)?", a: 783 },
+  { q: "How many pages are in 'War and Peace' (Pevear translation)?", a: 1296 },
+  { q: "How many languages are spoken in the world (approx)?", a: 7000 },
+  { q: "How many countries use the Euro as their official currency (2024)?", a: 20 },
+  { q: "How many tiles are in a Scrabble set?", a: 100 },
+  { q: "How many points is a Q worth in Scrabble?", a: 10 },
+  { q: "How many squares are on a chessboard?", a: 64 },
+  { q: "How many pieces does each player start with in chess?", a: 16 },
+  { q: "How many Monopoly properties can you buy in a standard game?", a: 28 },
+  { q: "How many bones are in a typical Connect Four token (trick question)?", a: 0 },
+  { q: "How many dimples are typically on a golf ball?", a: 336 },
+  { q: "How many feet are in a mile?", a: 5280 },
+  { q: "How many seconds are in a day?", a: 86400 },
+  { q: "How many letters are in the Greek alphabet?", a: 24 },
+  { q: "How many sides does a Rubik's Cube have?", a: 6 },
+  { q: "How many books are in the Bible (Protestant canon)?", a: 66 },
+  { q: "What year was the first Star Wars movie released?", a: 1977 },
+  { q: "How many countries have hosted the Summer Olympics?", a: 19 },
+  { q: "How many cards in a standard deck (no jokers)?", a: 52 },
+  { q: "How many letters in the English alphabet?", a: 26 },
+];
+
+// Pick N questions, avoiding any already used in this game
+export function getRandomQuestions(count = 7, exclude = []) {
+  const excludedTexts = new Set(exclude.map(e => (typeof e === 'string' ? e : e.q)));
+  const pool = questions.filter(q => !excludedTexts.has(q.q));
+  const shuffled = [...pool].sort(() => Math.random() - 0.5);
+  return shuffled.slice(0, count);
+}

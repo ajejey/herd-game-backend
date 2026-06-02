@@ -181,9 +181,10 @@ export function mountGame(io, namespacePath, gameDef) {
         return emitError(socket, 'Only the host can start the game', 'UNAUTHORIZED');
       }
 
+      const minPlayers = gameDef.minPlayers ?? 3;
       const connected = state.players.filter(p => p.connected);
-      if (connected.length < 3) {
-        return emitError(socket, 'Need at least 3 players to start', 'NOT_ENOUGH_PLAYERS');
+      if (connected.length < minPlayers) {
+        return emitError(socket, `Need at least ${minPlayers} players to start`, 'NOT_ENOUGH_PLAYERS');
       }
 
       const newState = gameDef.onStart(state);

@@ -14,6 +14,7 @@ import dotenv from 'dotenv';
 import { getRandomQuestion } from './utils/gameLogic.js';
 import { mountGame } from './engine/index.js';
 import { SayAnythingGame } from './games/sayAnything/game.js';
+import { GuesstimateGame } from './games/guesstimate/game.js';
 import { cleanupOldGames } from './utils/dbCleanup.js';
 
 import Game from './models/Game.js';
@@ -518,6 +519,7 @@ io.on('connection', (socket) => {
 
 // ── Game suite — each game gets its own namespace ────────────────────────────
 mountGame(io, '/sa', SayAnythingGame);
+mountGame(io, '/guesstimate', GuesstimateGame);
 
 const PORT = process.env.PORT || 3001;
 httpServer.listen(PORT, () => {
