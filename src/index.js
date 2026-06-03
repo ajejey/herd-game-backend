@@ -15,6 +15,7 @@ import { getRandomQuestion } from './utils/gameLogic.js';
 import { mountGame } from './engine/index.js';
 import { SayAnythingGame } from './games/sayAnything/game.js';
 import { GuesstimateGame } from './games/guesstimate/game.js';
+import { CloverGame } from './games/clover/game.js';
 import { cleanupOldGames } from './utils/dbCleanup.js';
 import { ensureAnalyticsIndexes } from './analytics.js';
 import dailyRouter, { ensureDailyIndexes } from './games/daily/dailyRoutes.js';
@@ -544,6 +545,7 @@ io.on('connection', (socket) => {
 // ── Game suite — each game gets its own namespace ────────────────────────────
 mountGame(io, '/sa', SayAnythingGame);
 mountGame(io, '/guesstimate', GuesstimateGame);
+mountGame(io, '/clover', CloverGame);
 
 const PORT = process.env.PORT || 3001;
 httpServer.listen(PORT, () => {
