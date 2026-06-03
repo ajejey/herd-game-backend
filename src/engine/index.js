@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
 import * as store from './store.js';
+import { logEvent } from '../analytics.js';
 
 const HOST_MIGRATION_DELAY_MS = 20_000; // migrate host after 20s offline
 
@@ -81,6 +82,8 @@ export function mountGame(io, namespacePath, gameDef) {
         roomCode,
         state: gameDef.deriveClientState(gameState, playerId),
       });
+
+      logEvent('game_created', { game: namespacePath, roomCode });
     });
 
     // ── Join game ────────────────────────────────────────────────────────────
@@ -168,6 +171,8 @@ export function mountGame(io, namespacePath, gameDef) {
         state: gameDef.deriveClientState(state, playerId),
       });
       broadcast(code);
+
+      logEvent('player_joined', { game: namespacePath, roomCode: code, playerCount: state.players.length });
     });
 
     // ── Start game ───────────────────────────────────────────────────────────
@@ -190,6 +195,8 @@ export function mountGame(io, namespacePath, gameDef) {
       const newState = gameDef.onStart(state);
       store.setGame(code, newState);
       broadcast(code);
+
+      logEvent('game_started', { game: namespacePath, roomCode: code, playerCount: connected.length });
     });
 
     // ── Game action (all game-specific events go through here) ───────────────
@@ -203,10 +210,22 @@ export function mountGame(io, namespacePath, gameDef) {
 
       store.refreshCleanup(code);
 
+      const wasFinished = state.status === 'finished';
       const newState = gameDef.handleAction(state, action, payload, player);
       if (newState) {
         store.setGame(code, newState);
         broadcast(code);
+
+        // Fire once, on the transition into 'finished'
+        if (newState.status === 'finished' && !wasFinished) {
+          logEvent('game_completed', {
+            game: namespacePath,
+            roomCode: code,
+            playerCount: newState.players?.length ?? null,
+            rounds: newState.currentRound ?? newState.round?.number ?? null,
+            durationSec: newState.createdAt ? Math.round((Date.now() - newState.createdAt) / 1000) : null,
+          });
+        }
       }
     });
 

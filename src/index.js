@@ -16,6 +16,7 @@ import { mountGame } from './engine/index.js';
 import { SayAnythingGame } from './games/sayAnything/game.js';
 import { GuesstimateGame } from './games/guesstimate/game.js';
 import { cleanupOldGames } from './utils/dbCleanup.js';
+import { ensureAnalyticsIndexes } from './analytics.js';
 
 import Game from './models/Game.js';
 import Player from './models/Player.js';
@@ -59,6 +60,8 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/herdmenta
     console.log('Connected to MongoDB');
     // Clean up old games on server start
     cleanupOldGames();
+    // Ensure the analytics TTL index exists (keeps the collection tiny)
+    ensureAnalyticsIndexes();
   })
   .catch((error) => {
     console.error('MongoDB connection error:', error);
