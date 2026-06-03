@@ -31,27 +31,42 @@ dotenv.config();
 
 const app = express();
 const httpServer = createServer(app);
+
+// Allowed browser origins. Includes the live domain (apex + www), the legacy
+// Vercel domain (kept during the migration), localhost for dev, and whatever
+// FRONTEND_URL is set to — normalised to drop any trailing slash.
+const ALLOWED_ORIGINS = [
+  'https://herdgamesonline.com',
+  'https://www.herdgamesonline.com',
+  'https://herd-game-react.vercel.app',
+  'http://localhost:3000',
+  ...(process.env.FRONTEND_URL ? [process.env.FRONTEND_URL.replace(/\/$/, '')] : []),
+];
+
+function corsOrigin(origin, callback) {
+  // Allow same-origin / non-browser requests (no Origin header) and whitelisted origins.
+  if (!origin || ALLOWED_ORIGINS.includes(origin.replace(/\/$/, ''))) return callback(null, true);
+  return callback(new Error('Not allowed by CORS'));
+}
+
+const corsOptions = {
+  origin: corsOrigin,
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
+};
+
 const io = new Server(httpServer, {
-  cors: {
-    origin: process.env.FRONTEND_URL,
-    methods: ["GET", "POST"],
-    allowedHeaders: ["my-custom-header"],
-    credentials: true
-  },
+  cors: { origin: ALLOWED_ORIGINS, methods: ['GET', 'POST'], credentials: true },
   allowEIO3: true,
   transports: ['websocket', 'polling']
 });
 
 // Configure CORS middleware
-app.use(cors({
-  origin: process.env.FRONTEND_URL,
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true
-}));
+app.use(cors(corsOptions));
 
 // Handle preflight requests
-app.options('*', cors());
+app.options('*', cors(corsOptions));
 
 app.use(express.json());
 
