@@ -17,6 +17,7 @@ import { SayAnythingGame } from './games/sayAnything/game.js';
 import { GuesstimateGame } from './games/guesstimate/game.js';
 import { cleanupOldGames } from './utils/dbCleanup.js';
 import { ensureAnalyticsIndexes } from './analytics.js';
+import dailyRouter, { ensureDailyIndexes } from './games/daily/dailyRoutes.js';
 
 import Game from './models/Game.js';
 import Player from './models/Player.js';
@@ -54,6 +55,9 @@ app.options('*', cors());
 
 app.use(express.json());
 
+// Daily Herd — REST endpoints (decoupled from the realtime game engine)
+app.use('/api/daily', dailyRouter);
+
 // Connect to MongoDB
 mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/herdmentality')
   .then(() => {
@@ -62,6 +66,8 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/herdmenta
     cleanupOldGames();
     // Ensure the analytics TTL index exists (keeps the collection tiny)
     ensureAnalyticsIndexes();
+    // Ensure Daily Herd indexes (dedupe + tally uniqueness)
+    ensureDailyIndexes();
   })
   .catch((error) => {
     console.error('MongoDB connection error:', error);
