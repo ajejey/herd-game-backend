@@ -40,23 +40,44 @@ async function questionDistribution(conn, dayNumber, questionId) {
     label: r.answerRaw,
     pct: total ? Math.round((r.count / total) * 100) : 0,
   }));
-  return { total, pluralityNorm: plurality?.answerNorm ?? null, topAnswers };
+  const byNorm = {};
+  rows.forEach((r) => { byNorm[r.answerNorm] = r.count; });
+  return { total, pluralityNorm: plurality?.answerNorm ?? null, topAnswers, byNorm };
 }
 
 // Recompute a played player's result from stored answers + current tallies.
+// Adds, per question, the % of the herd that gave YOUR answer (yourPct), plus a
+// headline "herd sync %" (avg agreement) and today's responder count.
 async function buildResult(conn, dayNumber, submission) {
   const perQuestion = [];
+  let responders = 0;
+  const syncs = [];
   for (const a of submission.answers) {
     const dist = await questionDistribution(conn, dayNumber, a.questionId);
+    responders = Math.max(responders, dist.total);
+    const yourCount = dist.byNorm[a.norm] || 0;
+    const yourPct = dist.total ? Math.round((yourCount / dist.total) * 100) : 0;
+    syncs.push(yourPct);
     perQuestion.push({
       questionId: a.questionId,
       yourAnswer: a.raw,
       matched: a.norm === dist.pluralityNorm,
+      yourPct,
       topAnswers: dist.topAnswers,
     });
   }
   const score = perQuestion.filter((q) => q.matched).length;
-  return { score, total: submission.answers.length, perQuestion };
+  const syncPct = syncs.length ? Math.round(syncs.reduce((s, v) => s + v, 0) / syncs.length) : 0;
+
+  // beatPct: how many of today's players (with a final score) you out-scored.
+  let beatPct = 0;
+  try {
+    const others = await conn.collection(SUBMISSIONS).find({ dayNumber, score: { $ne: null } }).project({ score: 1 }).toArray();
+    const scores = others.map((s) => s.score);
+    if (scores.length) beatPct = Math.round((scores.filter((s) => s < score).length / scores.length) * 100);
+  } catch { /* best-effort */ }
+
+  return { score, total: submission.answers.length, perQuestion, responders, syncPct, beatPct };
 }
 
 const router = express.Router();
@@ -147,27 +168,18 @@ router.post('/answer', async (req, res) => {
       );
     }
 
-    // Compute this player's per-question result against the (post-increment) distribution.
-    const perQuestion = [];
-    for (const a of clean) {
-      const dist = await questionDistribution(conn, today, a.questionId);
-      perQuestion.push({
-        questionId: a.questionId,
-        yourAnswer: a.raw,
-        matched: a.norm === dist.pluralityNorm,
-        topAnswers: dist.topAnswers,
-      });
-    }
-    const score = perQuestion.filter((q) => q.matched).length;
+    // Compute the player's result (per-question agreement %, herd sync %, responders)
+    // against the post-increment distribution.
+    const result = await buildResult(conn, today, { answers: clean });
 
     // Backfill the score + per-question matched flags onto the claimed submission.
     await conn.collection(SUBMISSIONS).updateOne(
       { dayNumber: today, anonId },
-      { $set: { score, answers: clean.map((a, i) => ({ ...a, matched: perQuestion[i].matched })) } }
+      { $set: { score: result.score, answers: clean.map((a, i) => ({ ...a, matched: result.perQuestion[i].matched })) } }
     );
 
-    logEvent('daily_completed', { dayNumber: today, score });
-    res.json({ score, total: clean.length, perQuestion });
+    logEvent('daily_completed', { dayNumber: today, score: result.score });
+    res.json(result);
   } catch (e) {
     res.status(500).json({ error: 'failed' });
   }
