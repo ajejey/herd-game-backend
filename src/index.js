@@ -19,6 +19,7 @@ import { CloverGame } from './games/clover/game.js';
 import { cleanupOldGames } from './utils/dbCleanup.js';
 import { ensureAnalyticsIndexes } from './analytics.js';
 import dailyRouter, { ensureDailyIndexes } from './games/daily/dailyRoutes.js';
+import clientErrorsRouter, { ensureClientErrorIndexes } from './clientErrors.js';
 
 import Game from './models/Game.js';
 import Player from './models/Player.js';
@@ -74,6 +75,9 @@ app.use(express.json());
 // Daily Herd — REST endpoints (decoupled from the realtime game engine)
 app.use('/api/daily', dailyRouter);
 
+// Client-side error capture (fire-and-forget; never affects gameplay)
+app.use('/api/client-error', clientErrorsRouter);
+
 // Connect to MongoDB
 mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/herdmentality')
   .then(() => {
@@ -84,6 +88,8 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/herdmenta
     ensureAnalyticsIndexes();
     // Ensure Daily Herd indexes (dedupe + tally uniqueness)
     ensureDailyIndexes();
+    // Ensure client-error TTL index (keeps the collection tiny)
+    ensureClientErrorIndexes();
   })
   .catch((error) => {
     console.error('MongoDB connection error:', error);
