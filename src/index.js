@@ -17,6 +17,7 @@ import { SayAnythingGame } from './games/sayAnything/game.js';
 import { GuesstimateGame } from './games/guesstimate/game.js';
 import { CloverGame } from './games/clover/game.js';
 import { TeamTriviaGame } from './games/teamtrivia/game.js';
+import { ChameleonGame } from './games/chameleon/game.js';
 import { cleanupOldGames } from './utils/dbCleanup.js';
 import { ensureAnalyticsIndexes } from './analytics.js';
 import dailyRouter, { ensureDailyIndexes } from './games/daily/dailyRoutes.js';
@@ -587,6 +588,7 @@ mountGame(io, '/sa', SayAnythingGame);
 mountGame(io, '/guesstimate', GuesstimateGame);
 mountGame(io, '/clover', CloverGame);
 mountGame(io, '/teamtrivia', TeamTriviaGame);
+mountGame(io, '/chameleon', ChameleonGame);
 
 const PORT = process.env.PORT || 3001;
 httpServer.listen(PORT, () => {
