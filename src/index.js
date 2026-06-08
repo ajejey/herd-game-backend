@@ -16,10 +16,12 @@ import { mountGame } from './engine/index.js';
 import { SayAnythingGame } from './games/sayAnything/game.js';
 import { GuesstimateGame } from './games/guesstimate/game.js';
 import { CloverGame } from './games/clover/game.js';
+import { TeamTriviaGame } from './games/teamtrivia/game.js';
 import { cleanupOldGames } from './utils/dbCleanup.js';
 import { ensureAnalyticsIndexes } from './analytics.js';
 import dailyRouter, { ensureDailyIndexes } from './games/daily/dailyRoutes.js';
 import clientErrorsRouter, { ensureClientErrorIndexes } from './clientErrors.js';
+import { ensureRoomIndexes } from './engine/persistence.js';
 import waitlistRouter, { ensureWaitlistIndexes } from './waitlist.js';
 
 import Game from './models/Game.js';
@@ -32,7 +34,21 @@ import { analyzeRoundAnswers, determinePinkCowHolder, checkWinCondition } from '
 
 dotenv.config();
 
+// ── Process-level crash guards ───────────────────────────────────────────────
+// CRITICAL for multiplayer: a single uncaught error must NEVER take down the
+// process, because that would disconnect EVERY player in EVERY room at once.
+// Log it and keep running.
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException]', err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandledRejection]', reason);
+});
+
 const app = express();
+// Behind Railway's proxy — trust one hop so req.ip is the real client IP
+// (and rate limits can't be bypassed with a spoofed X-Forwarded-For).
+app.set('trust proxy', 1);
 const httpServer = createServer(app);
 
 // Allowed browser origins. Includes the live domain (apex + www), the legacy
@@ -62,7 +78,17 @@ const corsOptions = {
 const io = new Server(httpServer, {
   cors: { origin: ALLOWED_ORIGINS, methods: ['GET', 'POST'], credentials: true },
   allowEIO3: true,
-  transports: ['websocket', 'polling']
+  transports: ['websocket', 'polling'],
+  // Transparently restore a player's session (and replay missed events) after a
+  // brief drop — mobile backgrounding, tab switches, flaky wifi. Big reduction
+  // in "I got disconnected" problems.
+  connectionStateRecovery: {
+    maxDisconnectionDuration: 2 * 60 * 1000, // 2 minutes
+    skipMiddlewares: true,
+  },
+  // More tolerant heartbeats so a momentary network blip doesn't kill the socket.
+  pingInterval: 20000,
+  pingTimeout: 25000,
 });
 
 // Configure CORS middleware
@@ -96,6 +122,8 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/herdmenta
     ensureClientErrorIndexes();
     // Ensure waitlist unique-email index
     ensureWaitlistIndexes();
+    // Ensure room-snapshot indexes (rooms survive a restart; TTL keeps it tiny)
+    ensureRoomIndexes();
   })
   .catch((error) => {
     console.error('MongoDB connection error:', error);
@@ -558,6 +586,7 @@ io.on('connection', (socket) => {
 mountGame(io, '/sa', SayAnythingGame);
 mountGame(io, '/guesstimate', GuesstimateGame);
 mountGame(io, '/clover', CloverGame);
+mountGame(io, '/teamtrivia', TeamTriviaGame);
 
 const PORT = process.env.PORT || 3001;
 httpServer.listen(PORT, () => {

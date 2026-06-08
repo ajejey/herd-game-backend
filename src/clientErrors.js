@@ -25,6 +25,12 @@ const RL_WINDOW_MS = 60 * 1000;
 const RL_MAX = 30; // max error reports per IP per minute
 const hits = new Map(); // ip -> { count, windowStart }
 
+// prune stale entries so the map can't grow unbounded over time
+setInterval(() => {
+  const cutoff = Date.now() - RL_WINDOW_MS;
+  for (const [ip, rec] of hits) if (rec.windowStart < cutoff) hits.delete(ip);
+}, 5 * 60 * 1000).unref();
+
 function rateLimited(ip) {
   const now = Date.now();
   const rec = hits.get(ip);
@@ -57,7 +63,7 @@ router.post('/', (req, res) => {
   // Respond first — the client never waits on us, and nothing here can break a game.
   res.status(204).end();
   try {
-    const ip = (req.headers['x-forwarded-for'] || req.ip || '').toString().split(',')[0].trim();
+    const ip = (req.ip || '').toString();
     if (rateLimited(ip)) return;
 
     const b = req.body || {};

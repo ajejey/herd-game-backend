@@ -64,3 +64,26 @@ export function refreshCleanup(roomCode) {
 export function allGames() {
   return games.entries();
 }
+
+// ── Snapshot/restore helpers (for surviving server restarts) ────────────────
+// All rejoin tokens that belong to a room (so a restored room can still be
+// rejoined after a restart).
+export function tokensForRoom(roomCode) {
+  const out = [];
+  for (const [token, data] of tokens.entries()) {
+    if (data.roomCode === roomCode) out.push({ token, playerId: data.playerId });
+  }
+  return out;
+}
+
+// Restore a room + its tokens into memory (used when loading a snapshot after a
+// restart). Does not overwrite a room that's already live in memory.
+export function restoreGame(roomCode, state, tokenEntries = []) {
+  if (games.has(roomCode)) return false;
+  games.set(roomCode, state);
+  for (const { token, playerId } of tokenEntries) {
+    if (token && playerId) tokens.set(token, { roomCode, playerId });
+  }
+  scheduleCleanup(roomCode);
+  return true;
+}

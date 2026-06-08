@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import * as store from './store.js';
 import { logEvent } from '../analytics.js';
+import { snapshotRoom, loadRoom } from './persistence.js';
 
 const HOST_MIGRATION_DELAY_MS = 20_000; // migrate host after 20s offline
 
@@ -23,9 +24,27 @@ export function mountGame(io, namespacePath, gameDef) {
     const state = store.getGame(roomCode);
     if (!state) return;
     for (const player of state.players) {
-      const clientState = gameDef.deriveClientState(state, player.id);
-      nsp.to(player.socketId).emit('state_update', { state: clientState });
+      try {
+        const clientState = gameDef.deriveClientState(state, player.id);
+        if (player.socketId) nsp.to(player.socketId).emit('state_update', { state: clientState });
+      } catch (err) {
+        console.error(`[${namespacePath}] deriveClientState failed for ${roomCode}:`, err);
+      }
     }
+    // Fire-and-forget snapshot so the room survives a server restart.
+    snapshotRoom(namespacePath, roomCode, state, store.tokensForRoom(roomCode));
+  }
+
+  // Wrap a socket handler so a thrown error can never crash the process or the
+  // namespace — it's logged and the offending client gets a generic error.
+  function safe(handler) {
+    return async (payload) => {
+      try {
+        await handler(payload || {});
+      } catch (err) {
+        console.error(`[${namespacePath}] handler error:`, err);
+      }
+    };
   }
 
   function emitError(socket, message, code = 'ERROR') {
@@ -43,7 +62,7 @@ export function mountGame(io, namespacePath, gameDef) {
   nsp.on('connection', (socket) => {
 
     // ── Create game ──────────────────────────────────────────────────────────
-    socket.on('create_game', ({ username, settings = {} } = {}) => {
+    socket.on('create_game', safe(async ({ username, settings = {} } = {}) => {
       if (!username?.trim()) {
         return emitError(socket, 'Username is required', 'MISSING_USERNAME');
       }
@@ -84,12 +103,19 @@ export function mountGame(io, namespacePath, gameDef) {
       });
 
       logEvent('game_created', { game: namespacePath, roomCode });
-    });
+    }));
 
     // ── Join game ────────────────────────────────────────────────────────────
-    socket.on('join_game', ({ roomCode, username, rejoinToken } = {}) => {
+    socket.on('join_game', safe(async ({ roomCode, username, rejoinToken } = {}) => {
       const code = roomCode?.toUpperCase().trim();
-      const state = store.getGame(code);
+      let state = store.getGame(code);
+
+      // Survive a server restart: if the room isn't in memory, try restoring it
+      // from the last snapshot before giving up (so rejoin links still work).
+      if (!state && code) {
+        const snap = await loadRoom(code);
+        if (snap) { store.restoreGame(code, snap.state, snap.tokens); state = store.getGame(code); }
+      }
 
       if (!state) {
         return emitError(socket, 'Room not found. Check your code.', 'ROOM_NOT_FOUND');
@@ -173,10 +199,10 @@ export function mountGame(io, namespacePath, gameDef) {
       broadcast(code);
 
       logEvent('player_joined', { game: namespacePath, roomCode: code, playerCount: state.players.length });
-    });
+    }));
 
     // ── Start game ───────────────────────────────────────────────────────────
-    socket.on('start_game', ({ roomCode } = {}) => {
+    socket.on('start_game', safe(async ({ roomCode } = {}) => {
       const code = roomCode?.toUpperCase().trim();
       const state = store.getGame(code);
       if (!state) return emitError(socket, 'Room not found', 'ROOM_NOT_FOUND');
@@ -197,10 +223,10 @@ export function mountGame(io, namespacePath, gameDef) {
       broadcast(code);
 
       logEvent('game_started', { game: namespacePath, roomCode: code, playerCount: connected.length });
-    });
+    }));
 
     // ── Game action (all game-specific events go through here) ───────────────
-    socket.on('game_action', ({ roomCode, action, payload = {} } = {}) => {
+    socket.on('game_action', safe(async ({ roomCode, action, payload = {} } = {}) => {
       const code = roomCode?.toUpperCase().trim();
       const state = store.getGame(code);
       if (!state) return;
@@ -227,10 +253,10 @@ export function mountGame(io, namespacePath, gameDef) {
           });
         }
       }
-    });
+    }));
 
     // ── Kick player (host only) ──────────────────────────────────────────────
-    socket.on('kick_player', ({ roomCode, playerId } = {}) => {
+    socket.on('kick_player', safe(async ({ roomCode, playerId } = {}) => {
       const code = roomCode?.toUpperCase().trim();
       const state = store.getGame(code);
       if (!state) return;
@@ -272,10 +298,10 @@ export function mountGame(io, namespacePath, gameDef) {
       if (kicked) kicked.emit('kicked', { message: 'You were removed by the host.' });
 
       broadcast(code);
-    });
+    }));
 
     // ── Disconnect ───────────────────────────────────────────────────────────
-    socket.on('disconnect', () => {
+    socket.on('disconnect', safe(async () => {
       const found = resolvePlayerBySocket(socket.id);
       if (!found) return;
 
@@ -304,7 +330,7 @@ export function mountGame(io, namespacePath, gameDef) {
           broadcast(roomCode);
         }
       }
-    });
+    }));
   });
 
   // ─────────────────────────────────────────────────────────────────────────

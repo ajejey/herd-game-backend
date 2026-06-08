@@ -15,6 +15,10 @@ const COLLECTION = 'waitlist';
 const RL_WINDOW_MS = 60 * 1000;
 const RL_MAX = 10;
 const hits = new Map();
+setInterval(() => {
+  const cutoff = Date.now() - RL_WINDOW_MS;
+  for (const [ip, rec] of hits) if (rec.windowStart < cutoff) hits.delete(ip);
+}, 5 * 60 * 1000).unref();
 function rateLimited(ip) {
   const now = Date.now();
   const rec = hits.get(ip);
@@ -38,7 +42,7 @@ const router = express.Router();
 
 router.post('/', async (req, res) => {
   try {
-    const ip = (req.headers['x-forwarded-for'] || req.ip || '').toString().split(',')[0].trim();
+    const ip = (req.ip || '').toString();
     if (rateLimited(ip)) return res.status(429).json({ error: 'rate_limited' });
 
     const b = req.body || {};
