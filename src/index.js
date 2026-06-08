@@ -20,6 +20,7 @@ import { cleanupOldGames } from './utils/dbCleanup.js';
 import { ensureAnalyticsIndexes } from './analytics.js';
 import dailyRouter, { ensureDailyIndexes } from './games/daily/dailyRoutes.js';
 import clientErrorsRouter, { ensureClientErrorIndexes } from './clientErrors.js';
+import waitlistRouter, { ensureWaitlistIndexes } from './waitlist.js';
 
 import Game from './models/Game.js';
 import Player from './models/Player.js';
@@ -78,6 +79,9 @@ app.use('/api/daily', dailyRouter);
 // Client-side error capture (fire-and-forget; never affects gameplay)
 app.use('/api/client-error', clientErrorsRouter);
 
+// Corporate "Teams Plus" waitlist (willingness-to-pay probe)
+app.use('/api/waitlist', waitlistRouter);
+
 // Connect to MongoDB
 mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/herdmentality')
   .then(() => {
@@ -90,6 +94,8 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/herdmenta
     ensureDailyIndexes();
     // Ensure client-error TTL index (keeps the collection tiny)
     ensureClientErrorIndexes();
+    // Ensure waitlist unique-email index
+    ensureWaitlistIndexes();
   })
   .catch((error) => {
     console.error('MongoDB connection error:', error);
