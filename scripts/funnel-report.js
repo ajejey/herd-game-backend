@@ -9,6 +9,8 @@
     node scripts/funnel-report.js            # last 14 days
     node scripts/funnel-report.js 30         # last 30 days
 */
+import dns from 'dns';
+dns.setServers(['1.1.1.1', '8.8.8.8']); // bypass ISP DNS that blocks Atlas SRV
 import 'dotenv/config';
 import mongoose from 'mongoose';
 
