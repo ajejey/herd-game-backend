@@ -24,6 +24,7 @@ import { cleanupOldGames } from './utils/dbCleanup.js';
 import { ensureAnalyticsIndexes } from './analytics.js';
 import dailyRouter, { ensureDailyIndexes } from './games/daily/dailyRoutes.js';
 import clientErrorsRouter, { ensureClientErrorIndexes } from './clientErrors.js';
+import dailyEventsRouter, { ensureDailyEventIndexes } from './dailyEvents.js';
 import { ensureRoomIndexes } from './engine/persistence.js';
 import waitlistRouter, { ensureWaitlistIndexes } from './waitlist.js';
 
@@ -108,6 +109,9 @@ app.use('/api/daily', dailyRouter);
 // Client-side error capture (fire-and-forget; never affects gameplay)
 app.use('/api/client-error', clientErrorsRouter);
 
+// Daily-game completion pings (client-only games; true plays-per-day)
+app.use('/api/daily-event', dailyEventsRouter);
+
 // Corporate "Teams Plus" waitlist (willingness-to-pay probe)
 app.use('/api/waitlist', waitlistRouter);
 
@@ -123,6 +127,8 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/herdmenta
     ensureDailyIndexes();
     // Ensure client-error TTL index (keeps the collection tiny)
     ensureClientErrorIndexes();
+    // Ensure daily-event TTL index (completion pings; keeps the collection tiny)
+    ensureDailyEventIndexes();
     // Ensure waitlist unique-email index
     ensureWaitlistIndexes();
     // Ensure room-snapshot indexes (rooms survive a restart; TTL keeps it tiny)
