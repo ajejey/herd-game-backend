@@ -94,6 +94,11 @@ const io = new Server(httpServer, {
   // More tolerant heartbeats so a momentary network blip doesn't kill the socket.
   pingInterval: 20000,
   pingTimeout: 25000,
+  // Capacity safety on a single instance: skip the CPU-heavy per-message
+  // compression (little benefit for our small JSON payloads), and cap the
+  // inbound buffer so a bad/hostile client can't balloon memory.
+  perMessageDeflate: false,
+  maxHttpBufferSize: 1e6, // 1 MB
 });
 
 // Configure CORS middleware
@@ -118,6 +123,43 @@ app.use('/api/hottakes', hotTakeRouter);
 
 // Corporate "Teams Plus" waitlist (willingness-to-pay probe)
 app.use('/api/waitlist', waitlistRouter);
+
+// ── Observability: is the single instance near capacity? ─────────────────────
+// Sample event-loop lag (the truest "am I overloaded?" signal for a Node
+// realtime server) by measuring timer drift.
+let eventLoopLagMs = 0;
+{
+  let last = process.hrtime.bigint();
+  const EVERY = 2000;
+  setInterval(() => {
+    const now = process.hrtime.bigint();
+    const drift = Number(now - last) / 1e6 - EVERY; // ms over the expected interval
+    eventLoopLagMs = Math.max(0, Math.round(drift));
+    last = now;
+  }, EVERY).unref();
+}
+
+function metricsSnapshot() {
+  const mem = process.memoryUsage();
+  return {
+    ok: true,
+    uptimeSec: Math.round(process.uptime()),
+    sockets: io.engine ? io.engine.clientsCount : null, // live connected clients
+    rooms: io.of('/').adapter ? io.of('/').adapter.rooms.size : null,
+    rssMb: Math.round(mem.rss / 1048576),
+    heapUsedMb: Math.round(mem.heapUsed / 1048576),
+    eventLoopLagMs, // sustained >50-100ms = CPU-bound / near capacity
+  };
+}
+
+// Lightweight health/capacity endpoint (also handy for uptime pings).
+app.get('/health', (req, res) => res.json(metricsSnapshot()));
+
+// Periodic capacity log so Railway logs show load over time.
+setInterval(() => {
+  const m = metricsSnapshot();
+  console.log(`[metrics] sockets=${m.sockets} rss=${m.rssMb}MB heap=${m.heapUsedMb}MB lag=${m.eventLoopLagMs}ms up=${m.uptimeSec}s`);
+}, 60000).unref();
 
 // Connect to MongoDB
 mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/herdmentality')
