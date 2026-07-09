@@ -20,6 +20,7 @@ import { TeamTriviaGame } from './games/teamtrivia/game.js';
 import { ChameleonGame } from './games/chameleon/game.js';
 import { SpectrumGame } from './games/wavelength/game.js';
 import { TwoTruthsGame } from './games/twotruths/game.js';
+import { ScattergoriesGame } from './games/scattergories/game.js';
 import { cleanupOldGames } from './utils/dbCleanup.js';
 import { ensureAnalyticsIndexes } from './analytics.js';
 import dailyRouter, { ensureDailyIndexes } from './games/daily/dailyRoutes.js';
@@ -647,6 +648,7 @@ mountGame(io, '/teamtrivia', TeamTriviaGame);
 mountGame(io, '/chameleon', ChameleonGame);
 mountGame(io, '/spectrum', SpectrumGame);
 mountGame(io, '/twotruths', TwoTruthsGame);
+mountGame(io, '/scattergories', ScattergoriesGame);
 
 const PORT = process.env.PORT || 3001;
 httpServer.listen(PORT, () => {
