@@ -237,10 +237,24 @@ export function mountGame(io, namespacePath, gameDef) {
       store.refreshCleanup(code);
 
       const wasFinished = state.status === 'finished';
+      const wasPhase = state.phase;
       const newState = gameDef.handleAction(state, action, payload, player);
       if (newState) {
         store.setGame(code, newState);
         broadcast(code);
+
+        // Phase transitions — tells us WHERE players abandon a game, not just
+        // that they did. (Clover shows 0% completion; without this we cannot
+        // tell whether they quit while writing clues or while resolving.)
+        if (newState.phase && newState.phase !== wasPhase) {
+          logEvent('game_phase', {
+            game: namespacePath,
+            roomCode: code,
+            phase: newState.phase,
+            playerCount: newState.players?.filter((p) => p.connected).length ?? null,
+            sinceStartSec: newState.createdAt ? Math.round((Date.now() - newState.createdAt) / 1000) : null,
+          });
+        }
 
         // Fire once, on the transition into 'finished'
         if (newState.status === 'finished' && !wasFinished) {
