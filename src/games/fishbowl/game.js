@@ -15,7 +15,11 @@
   Turn timer is client-driven (the giver's client counts down to `deadline` and
   calls end_turn) — no server timer, matching the rest of the suite.
 */
-const DEFAULT_WORDS = 3;
+// 2 words per player, not 3: the bowl is played through THREE times, so every
+// extra word costs three rounds of play. Prod showed only 22% of started games
+// ever finished — the game was simply too long. 4 players now means an 8-word
+// bowl instead of 12, cutting a third of the length without losing any round.
+const DEFAULT_WORDS = 2;
 const DEFAULT_TURN_SEC = 45;
 const ROUND_NAMES = { 1: 'Describe it (no saying the word)', 2: 'Act it out (no words)', 3: 'One word only' };
 
@@ -26,7 +30,11 @@ function shuffle(arr) {
 }
 
 export const FishbowlGame = {
-  minPlayers: 4,
+  // 3, not 4. A third of all Fishbowl rooms filled to 2-3 players and could
+  // never start, because two teams need 4. With 3 we drop into CO-OP mode:
+  // one shared bowl, one shared score, the clue-giver rotates and everyone
+  // else guesses. Still a real game, and it unblocks those rooms.
+  minPlayers: 3,
 
   createInitialState(settings = {}) {
     const w = Number(settings.words);
@@ -160,13 +168,18 @@ function currentGiverId(state) {
 
 function beginRounds(state) {
   const connected = state.players.filter((p) => p.connected);
+  // Fewer than 4 can't make two teams — play co-op: everyone on one team,
+  // giver rotates, shared score.
+  const coop = connected.length < 4;
   const teams = { A: [], B: [] };
-  connected.forEach((p, i) => teams[i % 2 === 0 ? 'A' : 'B'].push(p.id));
+  if (coop) connected.forEach((p) => teams.A.push(p.id));
+  else connected.forEach((p, i) => teams[i % 2 === 0 ? 'A' : 'B'].push(p.id));
   const allWords = shuffle(Object.values(state.submissions).flat());
   if (allWords.length === 0) return state; // nothing submitted — can't begin
   return {
     ...state,
     phase: 'playing',
+    coop,
     teams,
     teamScores: { A: 0, B: 0 },
     roundType: 1,
@@ -184,7 +197,10 @@ function endTurn(state) {
   const team = state.currentTeam;
   const lastTurn = state.turn ? { team, giverId: state.turn.giverId, got: state.turn.gotCount } : state.lastTurn;
   const giverIndex = { ...state.giverIndex, [team]: state.giverIndex[team] + 1 };
-  return { ...state, turn: null, lastTurn, giverIndex, currentTeam: team === 'A' ? 'B' : 'A' };
+  // In co-op there is no other team to pass to — the giver just rotates.
+  const other = team === 'A' ? 'B' : 'A';
+  const nextTeam = teamMembers(state, other).length > 0 ? other : team;
+  return { ...state, turn: null, lastTurn, giverIndex, currentTeam: nextTeam };
 }
 
 function advanceRound(state) {
@@ -192,8 +208,9 @@ function advanceRound(state) {
   const finishedTurn = endTurn(state); // pass play to the other team, clear turn
   const nextRound = state.roundType + 1;
   if (nextRound > 3) {
-    const winner =
-      state.teamScores.A === state.teamScores.B ? null
+    // Co-op has no winning team — the shared score IS the result.
+    const winner = state.coop ? null
+      : state.teamScores.A === state.teamScores.B ? null
         : state.teamScores.A > state.teamScores.B ? 'A' : 'B';
     return { ...finishedTurn, status: 'finished', roundType: 3, bowl: [], winner };
   }
