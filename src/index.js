@@ -23,6 +23,7 @@ import { TwoTruthsGame } from './games/twotruths/game.js';
 import { ScattergoriesGame } from './games/scattergories/game.js';
 import { WouldYouRatherGame } from './games/wouldyourather/game.js';
 import { FishbowlGame } from './games/fishbowl/game.js';
+import { TabooGame } from './games/taboo/game.js';
 import { cleanupOldGames } from './utils/dbCleanup.js';
 import { ensureAnalyticsIndexes } from './analytics.js';
 import dailyRouter, { ensureDailyIndexes } from './games/daily/dailyRoutes.js';
@@ -653,6 +654,7 @@ mountGame(io, '/twotruths', TwoTruthsGame);
 mountGame(io, '/scattergories', ScattergoriesGame);
 mountGame(io, '/wyr', WouldYouRatherGame);
 mountGame(io, '/fishbowl', FishbowlGame);
+mountGame(io, '/taboo', TabooGame);
 
 const PORT = process.env.PORT || 3001;
 httpServer.listen(PORT, () => {
