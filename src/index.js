@@ -29,6 +29,7 @@ import { ensureAnalyticsIndexes } from './analytics.js';
 import dailyRouter, { ensureDailyIndexes } from './games/daily/dailyRoutes.js';
 import clientErrorsRouter, { ensureClientErrorIndexes } from './clientErrors.js';
 import dailyEventsRouter, { ensureDailyEventIndexes } from './dailyEvents.js';
+import gameStatsRouter from './gameStats.js';
 import hotTakeRouter, { ensureHotTakeIndexes } from './games/hottakes/hotTakeRoutes.js';
 import { ensureRoomIndexes } from './engine/persistence.js';
 import waitlistRouter, { ensureWaitlistIndexes } from './waitlist.js';
@@ -121,6 +122,9 @@ app.use('/api/client-error', clientErrorsRouter);
 
 // Daily-game completion pings (client-only games; true plays-per-day)
 app.use('/api/daily-event', dailyEventsRouter);
+
+// Social-proof player counts for the game cards (cached, degrades to {}).
+app.use('/api/game-stats', gameStatsRouter);
 
 // Daily Hot Takes — crowd-tallied opinion game (this-or-that → archetype + split)
 app.use('/api/hottakes', hotTakeRouter);
