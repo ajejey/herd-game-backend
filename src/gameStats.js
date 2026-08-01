@@ -89,9 +89,18 @@ const ALIASES = {
   wyr: 'would-you-rather',
   sa: 'say-anything',
   gt: 'guesstimate',
+  teamtrivia: 'team-trivia',
 };
 
-const normalise = (g) => ALIASES[g] || g;
+/* Multiplayer games are logged under their Socket.IO namespace, which carries a
+   leading slash ("/scattergories", "/sa"), while solo games log a bare id
+   ("daily-herd"). Without stripping the slash first, every multiplayer game
+   missed the alias table and its badge silently never rendered — Scattergories
+   was sitting at 427 players/week and showing nothing. */
+const normalise = (g) => {
+  const key = String(g || '').replace(/^\/+/, '');
+  return ALIASES[key] || key;
+};
 
 async function computeStats() {
   const conn = mongoose.connection;
