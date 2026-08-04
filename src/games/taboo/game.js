@@ -86,10 +86,14 @@ export const TabooGame = {
       }
 
       case 'buzz': {
-        // Only the OPPOSING team may buzz (in co-op, anyone but the giver).
-        if (!state.turn || player.id === state.turn.giverId) return null;
-        const onGiversTeam = state.teams[state.currentTeam].includes(player.id);
-        if (!state.coop && onGiversTeam) return null;
+        // Mirrors card visibility above: you may only buzz what you can see.
+        // That means the opposing team and nobody else — not the giver, not the
+        // giver's guessing team, and not co-op (where everyone else is guessing,
+        // so there is no one holding the card to police it).
+        if (!state.turn || state.coop) return null;
+        if (player.id === state.turn.giverId) return null;
+        const opposing = state.currentTeam === 'A' ? 'B' : 'A';
+        if (!state.teams[opposing]?.includes(player.id)) return null;
         return scoreCard(state, -1, { buzzed: 1 });
       }
 
@@ -109,11 +113,19 @@ export const TabooGame = {
     base.currentGiverId = currentGiverId(state);
     base.cardsLeft = Math.max(0, state.deck.length - state.deckIndex);
 
-    // Only the giver may ever see the card. Everyone else must not.
-    if (state.turn && playerId === state.turn.giverId) {
-      base.card = state.deck[state.deckIndex] || null;
-    } else {
-      base.card = null;
+    // Who may see the card during a turn?
+    //   - the giver, obviously: they are describing it
+    //   - the OPPOSING team, because policing the forbidden words IS their job.
+    //     Without the card in front of them the buzz button is unusable — they
+    //     cannot know what counts as a slip.
+    // Never the giver's own team: they are the ones guessing, and the card
+    // would hand them the answer.
+    base.card = null;
+    if (state.turn) {
+      const isGiver = playerId === state.turn.giverId;
+      const opposing = state.currentTeam === 'A' ? 'B' : 'A';
+      const onOpposingTeam = !state.coop && !!state.teams[opposing]?.includes(playerId);
+      if (isGiver || onOpposingTeam) base.card = state.deck[state.deckIndex] || null;
     }
     delete base.deck;
     return base;
