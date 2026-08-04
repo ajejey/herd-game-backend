@@ -112,7 +112,7 @@ export const CARDS = [
   { word: 'Lighthouse', forbidden: ['Light', 'Sea', 'Ships', 'Tower', 'Coast'] },
   { word: 'Volcano', forbidden: ['Lava', 'Erupt', 'Mountain', 'Ash', 'Magma'] },
   { word: 'Waterfall', forbidden: ['Water', 'Fall', 'River', 'Cliff', 'Niagara'] },
-  { word: 'Igloo', forbidden: ['Ice', 'Snow', 'House', 'Eskimo', 'Cold'] },
+  { word: 'Igloo', forbidden: ['Ice', 'Snow', 'House', 'Shelter', 'Cold'] },
   { word: 'Playground', forbidden: ['Swing', 'Slide', 'Kids', 'Park', 'Play'] },
   { word: 'Aquarium', forbidden: ['Fish', 'Tank', 'Water', 'Glass', 'Swim'] },
   { word: 'Passport', forbidden: ['Travel', 'Document', 'Country', 'Photo', 'Border'] },
