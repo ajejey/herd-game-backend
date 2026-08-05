@@ -33,6 +33,7 @@ import gameStatsRouter from './gameStats.js';
 import hotTakeRouter, { ensureHotTakeIndexes } from './games/hottakes/hotTakeRoutes.js';
 import { ensureRoomIndexes } from './engine/persistence.js';
 import waitlistRouter, { ensureWaitlistIndexes } from './waitlist.js';
+import pushRouter, { ensurePushIndexes } from './push/pushRoutes.js';
 
 import Game from './models/Game.js';
 import Player from './models/Player.js';
@@ -69,6 +70,14 @@ const ALLOWED_ORIGINS = [
   'https://www.herdgamesonline.com',
   'https://herd-game-react.vercel.app',
   'http://localhost:3000',
+  // The Capacitor Android app. Its WebView serves the bundle from a local
+  // server, so the Origin header is https://localhost — NOT the site domain —
+  // and without these entries every request and socket from the app is rejected
+  // and the app can only show "couldn't reach the herd".
+  // See frontend/capacitor.config.json -> server.androidScheme.
+  'https://localhost',
+  'capacitor://localhost',  // the iOS equivalent, so an iOS build needs no change
+  'http://localhost',       // only if androidScheme is ever switched to http
   ...(process.env.FRONTEND_URL ? [process.env.FRONTEND_URL.replace(/\/$/, '')] : []),
 ];
 
@@ -132,6 +141,9 @@ app.use('/api/hottakes', hotTakeRouter);
 // Corporate "Teams Plus" waitlist (willingness-to-pay probe)
 app.use('/api/waitlist', waitlistRouter);
 
+// Android push device tokens (no-op until FCM_* env vars are set)
+app.use('/api/push', pushRouter);
+
 // ── Observability: is the single instance near capacity? ─────────────────────
 // Sample event-loop lag (the truest "am I overloaded?" signal for a Node
 // realtime server) by measuring timer drift.
@@ -189,6 +201,8 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/herdmenta
     ensureWaitlistIndexes();
     // Ensure room-snapshot indexes (rooms survive a restart; TTL keeps it tiny)
     ensureRoomIndexes();
+    // Ensure push token unique index (one row per device token)
+    ensurePushIndexes();
   })
   .catch((error) => {
     console.error('MongoDB connection error:', error);
