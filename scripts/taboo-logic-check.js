@@ -42,19 +42,43 @@ function run(N) {
     permOk = mate ? (TabooGame.handleAction(s2, 'buzz', {}, s2.players.find((p) => p.id === mate)) === null ? 'blocked ✓' : 'ALLOWED ✗') : 'n/a';
   }
 
-  // the giver must be the only one who can see the card
+  // ── Role visibility matrix ────────────────────────────────────────────────
+  // This previously asserted "the giver is the ONLY one who can see the card",
+  // comparing against whichever player happened not to be the giver. That was
+  // the bug a user reported on 4 Aug 2026: the opposing team is asked to buzz
+  // when a forbidden word is said, so they MUST be able to read the card. The
+  // check has to distinguish team-mate from opponent, which it did not.
+  //
+  //   giver          -> MUST see the card
+  //   giver's team   -> MUST NOT (it would hand them the answer)
+  //   opposing team  -> MUST see it (otherwise buzzing is impossible)
   let s3 = TabooGame.onStart(mk(N));
   const gid3 = s3.teams.A[0];
   s3 = TabooGame.handleAction(s3, 'start_turn', {}, s3.players.find((p) => p.id === gid3));
-  const giverSees = !!TabooGame.deriveClientState(s3, gid3).card;
-  const otherSees = !!TabooGame.deriveClientState(s3, s3.players.find((p) => p.id !== gid3).id).card;
+
+  const sees = (id) => !!TabooGame.deriveClientState(s3, id).card;
+  const giverSees = sees(gid3);
+  const mateId = s3.teams.A.find((id) => id !== gid3);
+  const oppId = s3.teams.B[0];
+
+  const mateSees = mateId ? sees(mateId) : null;      // null = no team-mate at this size
+  const oppSees = oppId ? sees(oppId) : null;         // null = co-op, no opposing team
+
+  const mateVerdict = mateId === undefined ? 'n/a' : mateSees ? 'LEAKED✗' : 'hidden ✓';
+  const oppVerdict = oppId === undefined ? 'n/a' : oppSees ? 'sees ✓' : 'BLIND✗';
 
   console.log(
     `${N}p | ${(state.coop ? 'CO-OP' : 'TEAMS').padEnd(5)} | finished:${state.status === 'finished' ? 'YES' : 'NO '} | ` +
     `A=${state.teamScores.A} B=${state.teamScores.B} | winner:${state.winner ?? '(none)'} | ` +
-    `mate-buzz:${permOk} | card giver:${giverSees ? 'sees' : 'HIDDEN✗'} other:${otherSees ? 'SEES✗' : 'hidden'}`
+    `mate-buzz:${permOk} | card giver:${giverSees ? 'sees ✓' : 'HIDDEN✗'} mate:${mateVerdict} opp:${oppVerdict}`
   );
-  return state.status === 'finished' && giverSees && !otherSees;
+
+  const visibilityOk =
+    giverSees &&
+    (mateId === undefined || mateSees === false) &&
+    (oppId === undefined || oppSees === true);
+
+  return state.status === 'finished' && visibilityOk;
 }
 
 const only = Number(process.argv[2]);

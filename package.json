@@ -7,7 +7,10 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
-    "build": "echo 'No build step needed for backend'"
+    "build": "echo 'No build step needed for backend'",
+    "check:banks": "node scripts/content-bank-check.js",
+    "check:logic": "node scripts/clover-logic-check.js && node scripts/fishbowl-logic-check.js && node scripts/taboo-logic-check.js",
+    "check:all": "npm run check:banks && npm run check:logic"
   },
   "dependencies": {
     "cors": "^2.8.5",
