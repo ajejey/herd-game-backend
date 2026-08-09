@@ -34,6 +34,7 @@ import hotTakeRouter, { ensureHotTakeIndexes } from './games/hottakes/hotTakeRou
 import { ensureRoomIndexes } from './engine/persistence.js';
 import waitlistRouter, { ensureWaitlistIndexes } from './waitlist.js';
 import pushRouter, { ensurePushIndexes } from './push/pushRoutes.js';
+import feedbackRouter, { ensureFeedbackIndexes } from './feedback.js';
 
 import Game from './models/Game.js';
 import Player from './models/Player.js';
@@ -144,6 +145,9 @@ app.use('/api/waitlist', waitlistRouter);
 // Android push device tokens (no-op until FCM_* env vars are set)
 app.use('/api/push', pushRouter);
 
+// Player-submitted problem reports (keeps complaints out of the Play reviews)
+app.use('/api/feedback', feedbackRouter);
+
 // ── Observability: is the single instance near capacity? ─────────────────────
 // Sample event-loop lag (the truest "am I overloaded?" signal for a Node
 // realtime server) by measuring timer drift.
@@ -203,6 +207,8 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/herdmenta
     ensureRoomIndexes();
     // Ensure push token unique index (one row per device token)
     ensurePushIndexes();
+    // Ensure feedback indexes (no TTL — human reports are kept)
+    ensureFeedbackIndexes();
   })
   .catch((error) => {
     console.error('MongoDB connection error:', error);
