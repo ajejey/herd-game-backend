@@ -10,6 +10,14 @@
  * thing and simply left. The Taboo report on 4 Aug 2026 described two problems
  * that had been live for weeks.
  */
+// Same local-only DNS override as src/index.js: this machine's ISP DNS does not
+// resolve Atlas SRV records, so the script fails with querySrv ECONNREFUSED
+// without it. Harmless in production, where the host's DNS works.
+import dns from 'dns';
+if (process.env.NODE_ENV !== 'production') {
+  dns.setServers(['1.1.1.1', '8.8.8.8']);
+}
+
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import { FEEDBACK_COLLECTION } from '../src/feedback.js';
