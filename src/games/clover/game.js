@@ -176,6 +176,12 @@ export const CloverGame = {
         clues: clover.clues,
         cards: clover.shuffled, // the 5 shuffled keyword cards
         isAuthor,
+        // MUST be here, not only on the root state: ResolvePhase reads
+        // `revealing` off `active`, and without it the reveal screen never
+        // renders. Confirming a placement then appeared to do nothing at all,
+        // the game could never advance past the first clover, and Clover shipped
+        // 113 rooms with ZERO completions before two players reported it.
+        revealing: !!state.revealing,
       };
       if (state.revealing) {
         active.solution = clover.keywords;
