@@ -274,23 +274,57 @@ io.on('connection', (socket) => {
   // Join game room
   socket.on('join_game', async ({ roomCode, username }) => {
     try {
-      const game = await Game.findOne({ roomCode });
+      /*
+        Normalise HERE, not only in the browser.
+
+        Room codes are generated uppercase and looked up by exact string match,
+        and this handler took whatever the client sent. The invite-link path
+        already did .trim().toUpperCase(), and every namespaced game does
+        `rc.toUpperCase().trim()` — the main game's typed-code path was the one
+        place that did not. A phone that autocapitalises to "Wi9nvo", or a
+        pasted code carrying a trailing space, therefore found no game and the
+        player was told "Game not found" for a room that plainly existed.
+
+        Doing it server-side matters more than the client fix: the Android app
+        ships its own bundled copy of the front end, so until people update it
+        they keep sending raw values. This makes those installs work today.
+      */
+      const code = String(roomCode || '').trim().toUpperCase();
+      const name = String(username || '').trim();
+      const game = await Game.findOne({ roomCode: code });
       if (!game) {
         socket.emit('error', { message: 'Game not found' });
         return;
       }
 
-      // Check if player already exists in this game
-      let player = await Player.findOne({ gameId: game._id, username });
-      
-      if (game.status !== 'waiting') {
-        // Only allow rejoin if player was already in the game
-        if (!player) {
-          socket.emit('error', { message: 'Game already in progress' });
-          return;
-        }
-      }
+      /*
+        Match a returning player case-insensitively.
 
+        This was an exact match on the raw username, so a player who dropped
+        out and typed "micah" where they had been "Micah" did not match their
+        own record — and once a game is under way that meant being refused
+        entry to a game they were already in. Room M8RVAL is carrying both
+        spellings as two separate players, which is that bug in the data.
+      */
+      const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      let player = await Player.findOne({
+        gameId: game._id,
+        username: new RegExp(`^${escaped}$`, 'i'),
+      });
+
+      /*
+        Let people in mid-game.
+
+        Herd Mentality scores by matching the group each round, so arriving at
+        round 3 with nothing on the board costs you points and breaks nothing —
+        there is no hidden state to leak and analyzeRoundAnswers works from the
+        answers that exist rather than requiring one per player.
+
+        Refusing was worse than it looks. Room M8RVAL had seven players at
+        round 3 when someone's friend was turned away; two minutes later the
+        group abandoned it and rebuilt the room from scratch. The rule cost
+        them the game they were in the middle of.
+      */
       if (player) {
         // Update existing player's connection
         player.socketId = socket.id;
@@ -300,14 +334,17 @@ io.on('connection', (socket) => {
         // Create new player
         player = new Player({
           gameId: game._id,
-          username,
+          username: name,
           socketId: socket.id,
           isConnected: true
         });
         await player.save();
       }
 
-      socket.join(roomCode);
+      // Join the CANONICAL room name. `roomCode` off the wire could differ in
+      // case, which would put this socket in a second, silent Socket.IO room
+      // that no broadcast ever reaches — in the room, but hearing nothing.
+      socket.join(game.roomCode);
       
       // Send current game state for reconnecting players
       const currentRound = await Round.findOne({ 
@@ -334,9 +371,10 @@ io.on('connection', (socket) => {
 
       socket.emit('game_joined', gameState);
 
-      // Notify all players
+      // Notify all players — broadcast on the canonical code for the same
+      // reason the socket joins on it.
       const players = await Player.find({ gameId: game._id });
-      io.to(roomCode).emit('players_updated', { players });
+      io.to(game.roomCode).emit('players_updated', { players });
     } catch (error) {
       console.error('Join game error:', error);
       socket.emit('error', { message: 'Failed to join game' });
@@ -599,21 +637,39 @@ io.on('connection', (socket) => {
   // Handle reconnection
   socket.on('reconnect_game', async ({ gameId, roomCode, username }) => {
     try {
-      const game = await Game.findOne({ _id: gameId, roomCode });
+      // Same normalisation as join_game: this code came out of the browser's
+      // own localStorage, which stored whatever was originally typed.
+      const rcode = String(roomCode || '').trim().toUpperCase();
+      const uname = String(username || '').trim();
+      const game = await Game.findOne({ _id: gameId, roomCode: rcode });
       if (!game) {
         socket.emit('reconnect_failed', { reason: 'Game not found' });
         return;
       }
 
-      // Find the disconnected player
+      /*
+        Take the player's seat back whether or not we had noticed them leave.
+
+        This used to require `isConnected: false`, and that is the wrong test.
+        A phone that locks, a tab refresh, a browser restoring a session — all
+        reconnect long before the old socket's disconnect has been processed,
+        so the record still says connected, the lookup found nobody, and the
+        client's handler for that failure is navigate('/'). The player was
+        thrown out of a game they were sitting in and dumped on the home page,
+        while everyone else stayed in the lobby wondering where they went.
+        "Gaga can't play with me because you're on a different page on the same
+        game" is that, described by someone watching it happen.
+
+        Matching is case-insensitive for the same reason as join_game.
+      */
+      const esc = uname.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const player = await Player.findOne({
         gameId,
-        username,
-        isConnected: false
+        username: new RegExp(`^${esc}$`, 'i'),
       });
 
       if (!player) {
-        socket.emit('reconnect_failed', { reason: 'Player not found or already connected' });
+        socket.emit('reconnect_failed', { reason: 'Player not found' });
         return;
       }
 
