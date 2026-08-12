@@ -66,8 +66,8 @@ export const PROMPTS = [
   { a: 'Always get the window seat', b: 'Always get extra legroom' },
 ];
 
-export function pickPrompt(usedIndexes = []) {
-  const all = PROMPTS.map((_, i) => i);
+export function pickPrompt(usedIndexes = [], size = PROMPTS.length) {
+  const all = Array.from({ length: size }, (_, i) => i);
   const pool = all.filter((i) => !usedIndexes.includes(i));
   const from = pool.length ? pool : all;
   return from[Math.floor(Math.random() * from.length)];

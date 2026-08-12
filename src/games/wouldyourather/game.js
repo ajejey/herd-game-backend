@@ -25,6 +25,14 @@ export const WouldYouRatherGame = {
       usedPrompts: [],
       round: null,
       winner: null,
+      /*
+        A host's own "would you rather" pairs, resolved by the engine from
+        settings.packCode. Stored on the room rather than read live, so a pack
+        that expires mid-game cannot change the questions under the players.
+      */
+      customPrompts: Array.isArray(settings.customQuestions) && settings.customQuestions.length
+        ? settings.customQuestions
+        : null,
     };
   },
 
@@ -95,8 +103,9 @@ export const WouldYouRatherGame = {
 // ── helpers ──────────────────────────────────────────────────────────────────
 function startRound(state) {
   const nextRound = state.currentRound + 1;
-  const idx = pickPrompt(state.usedPrompts);
-  const p = PROMPTS[idx];
+  const bank = (Array.isArray(state.customPrompts) && state.customPrompts.length) ? state.customPrompts : PROMPTS;
+  const idx = pickPrompt(state.usedPrompts, bank.length);
+  const p = bank[idx];
   return {
     ...state,
     status: 'playing',

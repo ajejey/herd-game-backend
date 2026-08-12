@@ -42,6 +42,10 @@ export const SayAnythingGame = {
       // per-round state (reset each round)
       round: null,
       usedQuestions: [],
+      // A host's own questions, resolved by the engine from settings.packCode.
+      customQuestions: Array.isArray(settings.customQuestions) && settings.customQuestions.length
+        ? settings.customQuestions
+        : null,
     };
   },
 
@@ -159,7 +163,7 @@ export const SayAnythingGame = {
         if (!['picking', 'answering', 'judging', 'betting'].includes(state.phase)) return null;
         if (player.id !== state.hostId) return null;
         const newJudgeIndex = (state.judgeIndex + 1) % state.players.length;
-        const choices = getRandomQuestions(3, state.usedQuestions);
+        const choices = getRandomQuestions(3, state.usedQuestions, state.customQuestions);
         return {
           ...state,
           phase: 'picking',
@@ -259,7 +263,7 @@ export const SayAnythingGame = {
 
 function startRound(state) {
   const judgeIndex = state.currentRound === 0 ? 0 : nextJudgeIndex(state);
-  const choices = getRandomQuestions(3, state.usedQuestions);
+  const choices = getRandomQuestions(3, state.usedQuestions, state.customQuestions);
 
   return {
     ...state,

@@ -35,6 +35,7 @@ import { ensureRoomIndexes } from './engine/persistence.js';
 import waitlistRouter, { ensureWaitlistIndexes } from './waitlist.js';
 import pushRouter, { ensurePushIndexes } from './push/pushRoutes.js';
 import feedbackRouter, { ensureFeedbackIndexes } from './feedback.js';
+import packsRouter, { usePack } from './packs.js';
 
 import Game from './models/Game.js';
 import Player from './models/Player.js';
@@ -148,6 +149,9 @@ app.use('/api/push', pushRouter);
 // Player-submitted problem reports (keeps complaints out of the Play reviews)
 app.use('/api/feedback', feedbackRouter);
 
+// Host-written custom question packs, addressed by pack code (no accounts).
+app.use('/api/packs', packsRouter);
+
 // ── Observability: is the single instance near capacity? ─────────────────────
 // Sample event-loop lag (the truest "am I overloaded?" signal for a Node
 // realtime server) by measuring timer drift.
@@ -219,16 +223,22 @@ io.on('connection', (socket) => {
   console.log('New client connected');
 
   // Create game room
-  socket.on('create_game', async ({ username }) => {
-    console.log('Received create_game request:', { username, socketId: socket.id });
+  socket.on('create_game', async ({ username, packCode }) => {
+    console.log('Received create_game request:', { username, packCode, socketId: socket.id });
     try {
       const roomCode = await Game.generateRoomCode();
       console.log('Generated room code:', roomCode);
 
+      // A bad or expired pack code must never stop the room being created —
+      // fall through to the built-in questions instead of failing the host.
+      const customQuestions = packCode ? await usePack(packCode) : null;
+
       const game = new Game({
         roomCode,
         hostId: socket.id,
-        status: 'waiting'
+        status: 'waiting',
+        packCode: customQuestions ? String(packCode).toUpperCase() : undefined,
+        customQuestions: customQuestions || []
       });
       await game.save();
       console.log('Game created:', { gameId: game._id, roomCode });
@@ -351,7 +361,7 @@ io.on('connection', (socket) => {
       // Start first round
       game.status = 'in-progress';
       game.currentRound = 1;
-      const firstQuestion = getRandomQuestion();
+      const firstQuestion = getRandomQuestion([], game.customQuestions);
       game.currentQuestion = firstQuestion;
       game.usedQuestions = [firstQuestion];
       await game.save();
@@ -512,7 +522,7 @@ io.on('connection', (socket) => {
       });
       await nextRound.save();
 
-      const nextQuestion = getRandomQuestion(game.usedQuestions);
+      const nextQuestion = getRandomQuestion(game.usedQuestions, game.customQuestions);
       game.currentRound += 1;
       game.currentQuestion = nextQuestion;
       game.usedQuestions.push(nextQuestion);

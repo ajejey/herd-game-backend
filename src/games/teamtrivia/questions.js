@@ -64,10 +64,11 @@ export const QUESTIONS = [
 ];
 
 // Pick n unused questions at random; recycle if the bank is exhausted.
-export function getRandomQuestions(n, usedQ = []) {
+export function getRandomQuestions(n, usedQ = [], custom = null) {
+  const bank = Array.isArray(custom) && custom.length ? custom : QUESTIONS;
   const used = new Set(usedQ);
-  let pool = QUESTIONS.filter((q) => !used.has(q.q));
-  if (pool.length < n) pool = [...QUESTIONS]; // recycle
+  let pool = bank.filter((q) => !used.has(q.q));
+  if (pool.length < n) pool = [...bank]; // recycle
   // Fisher–Yates
   const a = [...pool];
   for (let i = a.length - 1; i > 0; i--) {

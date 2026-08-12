@@ -102,8 +102,9 @@ export const questions = [
   "What would the perfect day look like?",
 ];
 
-export function getRandomQuestions(count = 5, exclude = []) {
-  const pool = questions.filter(q => !exclude.includes(q));
-  const shuffled = pool.sort(() => Math.random() - 0.5);
+export function getRandomQuestions(count = 5, exclude = [], custom = null) {
+  const bank = Array.isArray(custom) && custom.length ? custom : questions;
+  const pool = bank.filter(q => !exclude.includes(q));
+  const shuffled = (pool.length ? pool : bank).slice().sort(() => Math.random() - 0.5);
   return shuffled.slice(0, count);
 }

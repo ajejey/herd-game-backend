@@ -25,6 +25,10 @@ export const TeamTriviaGame = {
       totalRounds: Number.isInteger(rounds) && rounds >= 3 && rounds <= 20 ? rounds : DEFAULT_ROUNDS,
       round: null,
       usedQuestions: [],
+      // A host's own questions, resolved by the engine from settings.packCode.
+      customQuestions: Array.isArray(settings.customQuestions) && settings.customQuestions.length
+        ? settings.customQuestions
+        : null,
     };
   },
 
@@ -100,7 +104,7 @@ export const TeamTriviaGame = {
 // ── helpers ──────────────────────────────────────────────────────────────────
 function startRound(state) {
   const nextRound = state.currentRound + 1;
-  const [picked] = getRandomQuestions(1, state.usedQuestions);
+  const [picked] = getRandomQuestions(1, state.usedQuestions, state.customQuestions);
   // shuffle option order so the correct answer (authored at index 0) moves around
   const order = shuffle([0, 1, 2, 3]);
   const options = order.map((i) => picked.options[i]);

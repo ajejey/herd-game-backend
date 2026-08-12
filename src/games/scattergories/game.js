@@ -32,6 +32,10 @@ export const ScattergoriesGame = {
       timerSec: Number.isInteger(timer) && timer >= 45 && timer <= 240 ? timer : DEFAULT_TIMER,
       usedLetters: [],
       usedCats: [],
+      // A host's own categories, resolved by the engine from settings.packCode.
+      customCategories: Array.isArray(settings.customQuestions) && settings.customQuestions.length
+        ? settings.customQuestions
+        : null,
       round: null,
       winner: null,
     };
@@ -112,7 +116,7 @@ export const ScattergoriesGame = {
 function startRound(state) {
   const nextRound = state.currentRound + 1;
   const letter = pickLetter(state.usedLetters);
-  const categories = pickCategories(state.categoriesPerRound, state.usedCats);
+  const categories = pickCategories(state.categoriesPerRound, state.usedCats, state.customCategories);
   return {
     ...state,
     status: 'playing',

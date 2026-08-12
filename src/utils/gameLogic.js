@@ -72,12 +72,15 @@ export function checkWinCondition(player, pinkCowHolder) {
   return player.score >= 8 && player._id !== pinkCowHolder;
 }
 
-// Get a random question that hasn't been used in the game yet
-export function getRandomQuestion(usedQuestions = []) {
-  const availableQuestions = PREDEFINED_QUESTIONS.filter(q => !usedQuestions.includes(q));
+// Get a random question that hasn't been used in the game yet.
+// `pool` lets a room play a host's custom pack instead of the built-in set —
+// everything else about the game is identical, which is the whole point.
+export function getRandomQuestion(usedQuestions = [], pool = null) {
+  const source = Array.isArray(pool) && pool.length ? pool : PREDEFINED_QUESTIONS;
+  const availableQuestions = source.filter(q => !usedQuestions.includes(q));
   if (availableQuestions.length === 0) {
     // If all questions have been used, start over
-    return PREDEFINED_QUESTIONS[Math.floor(Math.random() * PREDEFINED_QUESTIONS.length)];
+    return source[Math.floor(Math.random() * source.length)];
   }
   return availableQuestions[Math.floor(Math.random() * availableQuestions.length)];
 }

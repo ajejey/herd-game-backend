@@ -50,11 +50,12 @@ export function pickLetter(usedLetters = []) {
 }
 
 // Pick n distinct categories, avoiding ones used in recent rounds when possible.
-export function pickCategories(n, usedCats = []) {
+export function pickCategories(n, usedCats = [], custom = null) {
+  const BANK = Array.isArray(custom) && custom.length ? custom : CATEGORIES;
   const seed = (Date.now() ^ (usedCats.length * 2654435761)) >>> 0;
   const rand = mulberry32(seed);
-  const pool = CATEGORIES.filter((c) => !usedCats.includes(c));
-  const from = (pool.length >= n ? pool : [...CATEGORIES]);
+  const pool = BANK.filter((c) => !usedCats.includes(c));
+  const from = (pool.length >= n ? pool : [...BANK]);
   const a = [...from];
   for (let i = a.length - 1; i > 0; i--) {
     const j = Math.floor(rand() * (i + 1));

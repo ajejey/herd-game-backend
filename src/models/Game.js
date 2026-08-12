@@ -29,6 +29,14 @@ const gameSchema = new mongoose.Schema({
     type: [String],
     default: []
   },
+  // A host's custom pack, copied onto the room at creation. Copied rather than
+  // referenced so that editing or expiring a pack can never change or break a
+  // game that is already in progress.
+  packCode: String,
+  customQuestions: {
+    type: [String],
+    default: []
+  },
   createdAt: {
     type: Date,
     default: Date.now

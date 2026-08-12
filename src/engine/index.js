@@ -1,3 +1,4 @@
+import { usePack } from '../packs.js';
 import { randomUUID } from 'crypto';
 import * as store from './store.js';
 import { logEvent } from '../analytics.js';
@@ -65,6 +66,28 @@ export function mountGame(io, namespacePath, gameDef) {
     socket.on('create_game', safe(async ({ username, settings = {} } = {}) => {
       if (!username?.trim()) {
         return emitError(socket, 'Username is required', 'MISSING_USERNAME');
+      }
+
+      /*
+        Custom question packs are resolved HERE rather than in each game, so
+        every namespaced game gets them for free. createInitialState is
+        synchronous, so the async lookup has to happen before it is called.
+        A bad or expired code must never block the room — the game simply
+        falls back to its built-in questions.
+
+        `customQuestions` is stripped FIRST, unconditionally. It is a field the
+        server fills in, and `settings` arrives straight off the socket: left
+        alone, a client that simply omits packCode had its own array carried
+        into createInitialState untouched, past the 60-question cap, past the
+        140-character cap and past every shape check, and served to everyone in
+        the room. Resolving the pack only when packCode is present is correct;
+        trusting the resolved field to be absent otherwise was not.
+      */
+      const { customQuestions: _ignored, ...clientSettings } = settings || {};
+      settings = clientSettings;
+      if (settings.packCode) {
+        const items = await usePack(settings.packCode);
+        settings = { ...settings, customQuestions: items || null };
       }
 
       const roomCode = store.generateRoomCode();
