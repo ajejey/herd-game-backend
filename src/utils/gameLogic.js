@@ -30,19 +30,53 @@ export async function analyzeRoundAnswers(roundId) {
     .map(([answer]) => answer);
 
   // Get players who gave unique answers
-  const uniquePlayers = uniqueAnswers.length === 1 
+  const uniquePlayers = uniqueAnswers.length === 1
     ? answers.find(a => uniqueAnswers.includes(a.normalizedAnswer))?.playerId
     : null;
 
-  // Get players who gave majority answer
-  const scoringPlayers = majorityAnswers.length === 1
+  /*
+    A TIE IS STILL A HERD.
+
+    This used to award points only when there was a single top answer:
+
+        majorityAnswers.length === 1 ? ...matching players... : []
+
+    so a round where three people said "food" and three said "evangelism"
+    scored NOBODY — six players matched someone exactly and every one of them
+    was shown "Tied", zero points, and "No majority answer". In a game whose
+    entire premise is that you score by matching the group, that reads as the
+    game being broken, and a player wrote in to say exactly that: "Two entries
+    were exactly the same but didn't match."
+
+    It is not rare. Across 1,122 recent rounds, 32 threw away real agreement —
+    including one round where three separate pairs matched and all six players
+    got nothing.
+
+    So: every player in every tied top group scores. `agreed` is the guard that
+    keeps the genuine case correct — when the top count is 1 nobody matched
+    anybody, and nobody should score.
+  */
+  const agreed = maxCount >= 2;
+  const scoringPlayers = agreed
     ? answers
-        .filter(a => a.normalizedAnswer === majorityAnswers[0])
+        .filter(a => majorityAnswers.includes(a.normalizedAnswer))
         .map(a => a.playerId)
     : [];
 
   return {
-    majorityAnswer: majorityAnswers.length === 1 ? majorityAnswers[0] : null,
+    // Kept for older clients: a single herd, or null. The Android app ships a
+    // frozen bundle, so it will keep reading this one for a while — which is
+    // fine, because the POINTS above are now right regardless of what any
+    // client chooses to render.
+    //
+    // `agreed` guards this too, or a round with a single answer (everyone else
+    // dropped) would report that answer as the majority while scoring nobody —
+    // the screen then says "Majority Answer: x" and badges the same player
+    // "Unique, +0" directly underneath it.
+    majorityAnswer: agreed && majorityAnswers.length === 1 ? majorityAnswers[0] : null,
+    // Every herd that scored this round, so a client can show "two herds tied,
+    // both score" instead of silently calling it nothing.
+    majorityAnswers: agreed ? majorityAnswers : [],
     uniqueAnswerPlayer: uniquePlayers,
     scoringPlayers,
     allAnswers: answers.map(a => ({
