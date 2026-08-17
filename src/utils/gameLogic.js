@@ -99,11 +99,34 @@ export function determinePinkCowHolder(currentHolder, uniqueAnswerPlayer) {
   return currentHolder ? currentHolder.toString() : null;
 }
 
-/**
- * Checks if a player has won (8 points and doesn't have pink cow)
- */
+/*
+  The win rule: 8 points, and not holding the pink cow.
+
+  Two things were wrong with this.
+
+  It compared `player._id !== pinkCowHolder` — a Mongoose ObjectId against the
+  string the holder is stored as — which is never equal, so it would have called
+  the cow holder a winner and undone the only rule the pink cow has. That never
+  shipped for one reason: nothing called it. index.js wrote the rule out by hand
+  in three separate handlers instead, and a rule kept in three places is a rule
+  that will be correct in two of them. That is precisely how tied herds came to
+  score nobody — one expression of "who scores", in two places, agreeing until
+  it didn't.
+
+  So: one definition, compared as strings, used everywhere.
+*/
 export function checkWinCondition(player, pinkCowHolder) {
-  return player.score >= 8 && player._id !== pinkCowHolder;
+  return (player.score || 0) >= 8 && String(player._id) !== String(pinkCowHolder || '');
+}
+
+/**
+ * The highest scorer who can actually win right now, or null if nobody can.
+ * Ties on score are broken arbitrarily, as they were before.
+ */
+export function findWinner(players, pinkCowHolder) {
+  const eligible = (players || []).filter(p => checkWinCondition(p, pinkCowHolder));
+  if (!eligible.length) return null;
+  return eligible.reduce((a, b) => (a.score > b.score ? a : b));
 }
 
 // Get a random question that hasn't been used in the game yet.

@@ -21,8 +21,9 @@
   Pure functions, no database and no server needed:
     node scripts/herd-scoring-check.js
 */
-import { analyzeRoundAnswers } from '../src/utils/gameLogic.js';
+import { analyzeRoundAnswers, checkWinCondition, findWinner } from '../src/utils/gameLogic.js';
 import Answer from '../src/models/Answer.js';
+import mongoose from 'mongoose';
 
 let failures = 0;
 const fail = (m) => { console.log(`  FAIL  ${m}`); failures += 1; };
@@ -140,6 +141,80 @@ await withAnswers(
     else ok('the single odd answer still takes the pink cow, tie or not');
   },
 );
+
+/*
+  ── the win rule ──────────────────────────────────────────────────────────────
+
+  8 points AND not holding the pink cow. checkWinCondition owned that rule,
+  compared `player._id !== pinkCowHolder` — an ObjectId against the string the
+  holder is stored as, which is NEVER equal — and would therefore have called
+  the cow holder a winner. It never shipped only because nothing called it:
+  index.js wrote the rule out by hand in three separate handlers instead.
+
+  The ObjectId case is the one that matters and it is the one a plain-string
+  test would miss, so these use real ObjectIds.
+*/
+console.log('\n=== the win rule: 8 points and not holding the cow ===');
+
+const oid = () => new mongoose.Types.ObjectId();
+const P = (id, score) => ({ _id: id, username: String(id).slice(-4), score });
+
+{
+  const cow = oid();
+  const player = P(cow, 9);
+  if (checkWinCondition(player, cow.toString())) {
+    fail('the cow holder was declared a winner (ObjectId vs string compared as unequal)');
+  } else {
+    ok('9 points while holding the cow does not win, comparing ObjectId to stored string');
+  }
+}
+
+{
+  const a = oid(), b = oid();
+  if (!checkWinCondition(P(a, 8), b.toString())) fail('8 points without the cow should win');
+  else ok('exactly 8 points without the cow wins');
+}
+
+{
+  const a = oid(), b = oid();
+  if (checkWinCondition(P(a, 7), b.toString())) fail('7 points should not win');
+  else ok('7 points does not win, cow or no cow');
+}
+
+{
+  // Nobody holds it — the "Nobody" button, and every game before the first
+  // odd answer. A null holder must not accidentally match a player.
+  const a = oid();
+  if (!checkWinCondition(P(a, 8), null)) fail('nobody holding the cow should not block a winner');
+  else if (!checkWinCondition(P(a, 8), undefined)) fail('an undefined holder should not block a winner');
+  else ok('with the cow on nobody, 8 points wins');
+}
+
+{
+  const cow = oid(), other = oid(), low = oid();
+  const players = [P(cow, 12), P(other, 8), P(low, 3)];
+  const w = findWinner(players, cow.toString());
+  if (!w) fail('findWinner found nobody when an 8-point player was free of the cow');
+  else if (String(w._id) !== String(other)) fail(`findWinner picked the cow holder (${w.score} pts) over the eligible player`);
+  else ok('the highest scorer is skipped when they hold the cow, and the next eligible one wins');
+}
+
+{
+  const cow = oid();
+  const w = findWinner([P(cow, 15), P(oid(), 2)], cow.toString());
+  if (w) fail(`a lone leader holding the cow was declared the winner with ${w.score} points`);
+  else ok('a lone leader holding the cow wins nothing — the deadlock the host now breaks by hand');
+}
+
+{
+  const a = oid(), b = oid();
+  const w = findWinner([P(a, 9), P(b, 11)], null);
+  if (!w || String(w._id) !== String(b)) fail('findWinner did not pick the highest eligible score');
+  else ok('the highest eligible score wins');
+}
+
+if (findWinner([], null) !== null) fail('an empty room produced a winner');
+else ok('no players, no winner');
 
 console.log(failures ? `\n${failures} FAILURE(S)\n` : '\nAll checks passed.\n');
 process.exit(failures ? 1 : 0);

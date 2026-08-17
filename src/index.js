@@ -43,7 +43,7 @@ import Round from './models/Round.js';
 import Answer from './models/Answer.js';
 import Question from './models/Question.js';
 import { normalizeAnswer } from './utils/answerNormalizer.js';
-import { analyzeRoundAnswers, determinePinkCowHolder, checkWinCondition } from './utils/gameLogic.js';
+import { analyzeRoundAnswers, determinePinkCowHolder, findWinner } from './utils/gameLogic.js';
 
 dotenv.config();
 
@@ -218,6 +218,62 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/herdmenta
     console.error('MongoDB connection error:', error);
   });
 
+/*
+  Who is the host, after they refresh?
+
+  `game.hostId` is a socket.id, written once in create_game and never again.
+  Socket ids change on every reconnect — a phone locking, a tab refresh, a lift,
+  a train tunnel — so from the host's first reconnect onwards their id no longer
+  matched and every host-only handler below refused them. The front end made the
+  same mistake from the other side: GAME_REJOINED spread initialState, so
+  `isHost` came back false and the Start / Next Round buttons were not even
+  rendered. Nobody else can do those things either, so the room became
+  unfinishable by anyone in it.
+
+  It is not a rare edge. Of 275 recent rooms, 67 had a host whose socket had
+  changed, and 67 of those 67 never completed — against 75% for rooms whose host
+  never reconnected. Whatever else is true of those rooms, a host reconnect took
+  the completion rate to zero.
+
+  The durable identity is the Player record: `isHost` is set at creation and
+  survives every reconnect. Ask that, and heal the stale `hostId` on the way
+  past so the cheap equality check keeps working for the rest of the room's life.
+*/
+async function isHostSocket(game, socketId) {
+  if (game.hostId === socketId) return true;
+
+  const player = await Player.findOne({ gameId: game._id, socketId, isHost: true });
+  if (!player) return false;
+
+  game.hostId = socketId;
+  await Game.updateOne({ _id: game._id }, { $set: { hostId: socketId } });
+  return true;
+}
+
+/*
+  What should someone coming back mid-game be shown — the answer box, or the
+  results?
+
+  `round.status` is the honest answer and is now written when a round resolves,
+  but rooms that are already in progress when this deploys have rounds that
+  finished without it, and people are playing in them right now. So fall back to
+  a signal those rooms do carry: a round with answers on it in a game whose
+  `playersAnswered` counter has been reset to zero is a round that completed.
+  Mid-round the counter is non-zero; before anyone answers there is nothing to
+  count. Either test alone is correct, and together they cover the deploy.
+
+  Returns the results payload, or null if the round is still collecting.
+*/
+async function completedRoundResults(game, round) {
+  if (!round) return null;
+
+  const answered = await Answer.countDocuments({ roundId: round._id });
+  const finished = round.status === 'completed' || (answered > 0 && (game.playersAnswered || 0) === 0);
+  if (!finished) return null;
+
+  return analyzeRoundAnswers(round._id);
+}
+
 // Socket.IO connection handling
 io.on('connection', (socket) => {
   console.log('New client connected');
@@ -345,7 +401,15 @@ io.on('connection', (socket) => {
       // case, which would put this socket in a second, silent Socket.IO room
       // that no broadcast ever reaches — in the room, but hearing nothing.
       socket.join(game.roomCode);
-      
+
+      // The host coming back through the front door rather than reconnect_game
+      // (a fresh tab, the invite link, a cleared localStorage). Point hostId at
+      // the socket they are actually using — see isHostSocket above.
+      if (player.isHost) {
+        game.hostId = socket.id;
+        await Game.updateOne({ _id: game._id }, { $set: { hostId: socket.id } });
+      }
+
       // Send current game state for reconnecting players
       const currentRound = await Round.findOne({ 
         gameId: game._id, 
@@ -356,6 +420,11 @@ io.on('connection', (socket) => {
         gameId: game._id,
         playerId: player._id,
         isReconnected: !!player,
+        // Tell the client which seat it is in. It used to decide this itself —
+        // GAME_CREATED set isHost true, GAME_JOINED set it false — so a host
+        // arriving through join_game was rendered the player's screen and had
+        // no Start button.
+        isHost: !!player.isHost,
         currentRound: game.currentRound,
         currentQuestion: game.currentQuestion,
         gameStatus: game.status,
@@ -363,11 +432,11 @@ io.on('connection', (socket) => {
         playersAnswered: game.playersAnswered
       };
 
-      // If round is complete, include round results
-      if (currentRound && currentRound.status === 'completed') {
-        const results = await analyzeRoundAnswers(currentRound._id);
-        gameState.roundResults = results;
-      }
+      // If the round is complete, include its results so the arriving player
+      // lands on the results screen rather than an answer box for a round that
+      // has already been scored.
+      const joinResults = await completedRoundResults(game, currentRound);
+      if (joinResults) gameState.roundResults = joinResults;
 
       socket.emit('game_joined', gameState);
 
@@ -391,7 +460,7 @@ io.on('connection', (socket) => {
       }
 
       // Verify sender is host
-      if (game.hostId !== socket.id) {
+      if (!(await isHostSocket(game, socket.id))) {
         socket.emit('error', { message: 'Only host can start the game' });
         return;
       }
@@ -493,6 +562,25 @@ io.on('connection', (socket) => {
             );
           }
 
+          /*
+            Write down that the round is over.
+
+            Round.status has existed since the first version, with an enum of
+            'collecting-answers' | 'completed', and nothing ever set it to
+            'completed'. So the restore path in join_game —
+
+                if (currentRound && currentRound.status === 'completed')
+
+            — could not fire, ever. Anyone who refreshed while looking at the
+            results came back to the answer box for a round that had already
+            been scored, under the words "2 of 2 players answered", with no
+            results and no Next Round button. For the host that made the room
+            unfinishable, and "How to go to next round" is exactly what that
+            screen looks like from the player's chair.
+          */
+          round.status = 'completed';
+          await round.save();
+
           // Update game state atomically
           await Game.findByIdAndUpdate(gameId, {
             pinkCowHolder: newPinkCowHolder,
@@ -509,22 +597,12 @@ io.on('connection', (socket) => {
             players: updatedPlayers
           });
 
-          // Find all players with 8 or more points
-          const playersWithEightPoints = updatedPlayers.filter(p => p.score >= 8);
-          
-          // Only declare winner if:
-          // 1. There's at least one player with 8 points who doesn't have the pink cow
-          // 2. OR if multiple players have 8 points (even if one has pink cow)
-          const potentialWinners = playersWithEightPoints.filter(p => 
-            p._id.toString() !== newPinkCowHolder
-          );
-
-          if (potentialWinners.length > 0) {
-            // Get the player with the highest score among potential winners
-            const winner = potentialWinners.reduce((prev, current) => 
-              (prev.score > current.score) ? prev : current
-            );
-            
+          // 8 points and not holding the cow — see findWinner in gameLogic.js.
+          // The comment that used to sit here described a second rule ("OR if
+          // multiple players have 8 points, even if one has the pink cow") that
+          // the code did not implement and never had.
+          const winner = findWinner(updatedPlayers, newPinkCowHolder);
+          if (winner) {
             await Game.findByIdAndUpdate(gameId, { status: 'completed' });
             io.to(game.roomCode).emit('game_completed', { winner });
           }
@@ -549,7 +627,7 @@ io.on('connection', (socket) => {
       }
 
       // Verify sender is host
-      if (game.hostId !== socket.id) {
+      if (!(await isHostSocket(game, socket.id))) {
         socket.emit('error', { message: 'Only host can start next round' });
         return;
       }
@@ -582,7 +660,7 @@ io.on('connection', (socket) => {
 
       const game = await Game.findById(gameId);
       if (!game || game.status !== 'in-progress') return;
-      if (game.hostId !== socket.id) {
+      if (!(await isHostSocket(game, socket.id))) {
         socket.emit('error', { message: 'Only host can adjust scores' });
         return;
       }
@@ -598,11 +676,8 @@ io.on('connection', (socket) => {
       io.to(game.roomCode).emit('players_updated', { players });
 
       // Re-run win check after adjustment
-      const eligibleWinners = players.filter(
-        p => p.score >= 8 && p._id.toString() !== (game.pinkCowHolder || '').toString()
-      );
-      if (eligibleWinners.length > 0) {
-        const winner = eligibleWinners.reduce((a, b) => (a.score > b.score ? a : b));
+      const winner = findWinner(players, game.pinkCowHolder);
+      if (winner) {
         await Game.findByIdAndUpdate(gameId, { status: 'completed' });
         io.to(game.roomCode).emit('game_completed', { winner });
       }
@@ -613,11 +688,68 @@ io.on('connection', (socket) => {
   });
   // ───── end Path B ─────
 
+  /*
+    Move the pink cow by hand (host only).
+
+    Asked for on 16 Aug 2026: "Manaully moving the cow would be a good feature".
+
+    The cow moves automatically, and only when EXACTLY ONE player gave a lone
+    answer (determinePinkCowHolder). That is the board game's rule and it is
+    right. What the board game also has, and this did not, is hands: at a table
+    somebody just picks the cow up.
+
+    Without that the game can lock. Winning needs 8 points AND not holding the
+    cow, so a player who reaches 8 while holding it cannot win until some later
+    round happens to produce a single odd answer — and in a group that keeps
+    agreeing, that round may never come. Room RK6J7L ran 34 rounds with its
+    leader sat on exactly 8 points holding the cow. Two of the last 120 games
+    that got past round one were in that state.
+
+    So the win check has to run again here, not just at the end of a round.
+    Moving the cow off someone on 8+ IS the winning move, and if this only
+    changed the badge the host would have done the right thing and watched
+    nothing happen.
+  */
+  socket.on('move_pink_cow', async ({ gameId, playerId }) => {
+    try {
+      const game = await Game.findById(gameId);
+      if (!game || game.status !== 'in-progress') return;
+      if (!(await isHostSocket(game, socket.id))) {
+        socket.emit('error', { message: 'Only the host can move the pink cow' });
+        return;
+      }
+
+      // An empty playerId means "take it off the table" — a legitimate choice
+      // when the group decides nobody deserves it this round.
+      let holder = null;
+      if (playerId) {
+        const target = await Player.findOne({ _id: playerId, gameId });
+        if (!target) return;
+        holder = target._id.toString();
+      }
+
+      await Game.findByIdAndUpdate(gameId, { pinkCowHolder: holder });
+
+      const players = await Player.find({ gameId });
+      io.to(game.roomCode).emit('pink_cow_moved', { pinkCowHolder: holder, players });
+
+      // Same rule as the end of a round, and now literally the same function.
+      const winner = findWinner(players, holder);
+      if (winner) {
+        await Game.findByIdAndUpdate(gameId, { status: 'completed' });
+        io.to(game.roomCode).emit('game_completed', { winner });
+      }
+    } catch (error) {
+      console.error('move_pink_cow error:', error);
+      socket.emit('error', { message: 'Failed to move the pink cow' });
+    }
+  });
+
   // Remove player (host only)
   socket.on('remove_player', async ({ gameId, playerId }) => {
     try {
       const game = await Game.findById(gameId);
-      if (!game || socket.id !== game.hostId) {
+      if (!game || !(await isHostSocket(game, socket.id))) {
         socket.emit('error', { message: 'Unauthorized' });
         return;
       }
@@ -678,6 +810,14 @@ io.on('connection', (socket) => {
       player.isConnected = true;
       await player.save();
 
+      // The host's socket id has just changed. Move hostId with it, or every
+      // host-only handler will refuse them for the rest of the game — see
+      // isHostSocket above for what that did to rooms.
+      if (player.isHost) {
+        game.hostId = socket.id;
+        await Game.updateOne({ _id: game._id }, { $set: { hostId: socket.id } });
+      }
+
       // Join socket room
       socket.join(game.roomCode);
 
@@ -690,17 +830,26 @@ io.on('connection', (socket) => {
 
       const playersAnswered = currentRound ? await Answer.countDocuments({ roundId: currentRound._id }) : 0;
 
+      // The same restore join_game does. Without it a refresh on the results
+      // screen came back to the answer box for a finished round — for the host,
+      // with no Next Round button, which is a room nobody can finish.
+      const roundResults = await completedRoundResults(game, currentRound);
+
       // Send game state to reconnecting player
       socket.emit('game_rejoined', {
         gameId: game._id,
         playerId: player._id,
         roomCode: game.roomCode,
+        // Without this the client cannot know, and its reducer assumed false.
+        isHost: !!player.isHost,
         gameState: {
           currentRound: game.currentRound,
           currentQuestion: game.currentQuestion,
+          gameStatus: game.status,
           players,
           pinkCowHolder: game.pinkCowHolder,
-          playersAnswered
+          playersAnswered,
+          roundResults
         }
       });
 
