@@ -76,8 +76,17 @@ const has = (name) => process.argv.includes(`--${name}`);
   A stable key for an error signature.
 
   Hashed from type + message with the volatile parts stripped, so the same bug
-  keeps the same key across days and a triage note survives. Room codes, ids and
-  numbers are removed — otherwise every room produces a "new" issue.
+  keeps its key across days and a triage note survives. Without that, anything
+  carrying an id or a timing would mint a fresh "new issue" on every occurrence
+  and the triage state would be worthless within a day.
+
+  Stripped: hex ids and digits. NOT room codes — and deliberately so. A code
+  like TRJQPP is six capital letters, which is the same shape as SERVER, FAILED
+  and PLEASE, so stripping it would mangle ordinary messages to catch something
+  that does not actually appear in one. Real messages here are "timeout",
+  "xhr poll error", "Script error." Room codes live in `page`, which is
+  intentionally not part of the key — that is what keeps one bug from becoming
+  one issue per room.
 */
 const signatureKey = (type, message) => {
   const stable = String(message || '')
