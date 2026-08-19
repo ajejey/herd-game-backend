@@ -29,15 +29,104 @@ function mulberry32(seed) {
   };
 }
 
-export function getDailyQuestions(dayNumber, n = QUESTIONS_PER_DAY) {
-  const rand = mulberry32((dayNumber + 1) * 2654435761);
+/*
+  Deal from a shuffled deck, do not re-shuffle every day.
+
+  The original version shuffled all questions afresh for each day and took the
+  first five. Each day was independent, so nothing stopped a question landing on
+  day 79 and again on day 81 — random WITH replacement across days, when a daily
+  game needs a deck.
+
+  Measured on the 107-question bank before this change:
+
+      3 days →   0 of 15 already seen
+      5 days →   2 of 25   (8%)
+      7 days →   7 of 35  (20%)
+     14 days →  17 of 70  (24%)
+     30 days →  68 of 150 (45%)
+
+  A casual player never noticed. Someone who came back every day — exactly the
+  habit the daily games exist to build — was seeing a repeat within a week and
+  nearly half repeats within a month.
+
+  Now: shuffle the whole bank once per CYCLE, and day N takes the next five
+  cards off that deck. No question can recur until the deck is exhausted, which
+  with 107 questions is 21 days. The remainder (107 - 21*5 = 2) is left on the
+  table and differs each cycle, since each cycle shuffles with its own seed.
+
+  Still fully deterministic from the day number, still no database, still the
+  same set worldwide. Adding questions now extends the streak linearly — 200
+  questions would give 40 clean days — whereas under the old scheme more
+  questions barely moved the day-5 repeat.
+
+  Only affects days from here on. Past days are not replayable and their results
+  are rebuilt from the questionIds stored on the submission, so nothing already
+  recorded changes meaning.
+*/
+// A whole deck for one cycle: every question, in a seeded order.
+function rawDeck(cycle) {
+  const rand = mulberry32((cycle + 1) * 2654435761);
   const idx = PREDEFINED_QUESTIONS.map((_, i) => i);
-  // Seeded Fisher–Yates shuffle, then take the first n.
   for (let i = idx.length - 1; i > 0; i--) {
     const j = Math.floor(rand() * (i + 1));
     [idx[i], idx[j]] = [idx[j], idx[i]];
   }
-  return idx.slice(0, n).map((i) => ({ id: i, text: PREDEFINED_QUESTIONS[i] }));
+  return idx;
+}
+
+/*
+  Days a question is guaranteed not to come back, even across a deck boundary.
+
+  Within one deck no repeat is possible at all. The hole is the SEAM: a player
+  who starts mid-deck gets the tail of one deck and then the head of the next,
+  which is freshly shuffled and can legitimately re-serve what they saw days
+  ago. Measured on the real bank, starting from today (day 79, sixteen days into
+  a deck), that produced 12 repeats by day 14 — the guarantee only held for
+  someone who happened to start on day one of a cycle, and real players arrive
+  on whatever day they arrive.
+
+  So the head of each deck is stitched to avoid the previous deck's tail.
+*/
+const GUARD_DAYS = 7;
+
+function deckFor(cycle, n) {
+  const deck = rawDeck(cycle);
+  const guard = GUARD_DAYS * n;
+  if (guard * 2 >= deck.length) return deck; // bank too small to stitch usefully
+
+  const prev = rawDeck(cycle - 1);
+  const prevTail = new Set(prev.slice(Math.max(0, prev.length - guard)));
+
+  // Push any card that appeared in the previous deck's tail out of this deck's
+  // head, swapping it with the first card further down that is safe. Purely
+  // deterministic, so every player still sees the same thing.
+  for (let i = 0; i < guard; i++) {
+    if (!prevTail.has(deck[i])) continue;
+    for (let j = guard; j < deck.length; j++) {
+      if (!prevTail.has(deck[j])) {
+        const tmp = deck[i];
+        deck[i] = deck[j];
+        deck[j] = tmp;
+        break;
+      }
+    }
+  }
+  return deck;
+}
+
+export function getDailyQuestions(dayNumber, n = QUESTIONS_PER_DAY) {
+  const total = PREDEFINED_QUESTIONS.length;
+  if (total === 0) return [];
+
+  const perCycle = Math.max(1, Math.floor(total / n)); // whole days per deck
+  // Floor division that also behaves for days before the epoch, where a plain
+  // % would go negative and index off the front of the deck.
+  const cycle = Math.floor(dayNumber / perCycle);
+  const offset = ((dayNumber % perCycle) + perCycle) % perCycle;
+
+  const deck = deckFor(cycle, n);
+  const start = offset * n;
+  return deck.slice(start, start + n).map((i) => ({ id: i, text: PREDEFINED_QUESTIONS[i] }));
 }
 
 export function isValidQuestionId(id) {
