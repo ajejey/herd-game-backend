@@ -104,13 +104,3 @@ export function normalizeAnswer(answer) {
   return joined ? stemmer(joined) : '';
 }
 
-/*
-  A looser key, for grouping answers that are the same word spelled differently.
-
-  Kept separate from normalizeAnswer on purpose: this one is coarse enough to
-  collide unrelated short words, so it is only ever used to suggest merges for
-  review, never to bucket answers directly.
-*/
-export function loosekey(answer) {
-  return normalizeAnswer(answer).replace(/[aeiou]/g, '');
-}

@@ -87,15 +87,33 @@ function rawDeck(cycle) {
 
   So the head of each deck is stitched to avoid the previous deck's tail.
 */
-const GUARD_DAYS = 7;
-
 function deckFor(cycle, n) {
   const deck = rawDeck(cycle);
-  const guard = GUARD_DAYS * n;
+
+  /*
+    The guard scales with the bank instead of being a fixed number of days.
+
+    It was hardcoded at 7 because 107 questions could not support more — the
+    stitch needs the guarded head and the guarded tail to be a small fraction of
+    the deck, or there are not enough safe cards left to swap in. At 211 the
+    same third of a cycle is 14 days, and adding questions from here widens the
+    guarantee automatically rather than needing this constant revisited.
+  */
+  const perCycle = Math.floor(deck.length / n);
+  const guardDays = Math.max(7, Math.floor(perCycle / 3));
+  const guard = guardDays * n;
   if (guard * 2 >= deck.length) return deck; // bank too small to stitch usefully
 
+  /*
+    The tail that matters is the last `guard` cards the previous cycle actually
+    SERVED, not the last cards of the array. A deck of 211 only deals 42*5 = 210,
+    so slicing from `length - guard` starts one card late and leaves the first
+    card of the guarded window unguarded. Off by one, invisible, and it would
+    quietly let one question return inside the window we promise it will not.
+  */
   const prev = rawDeck(cycle - 1);
-  const prevTail = new Set(prev.slice(Math.max(0, prev.length - guard)));
+  const served = perCycle * n;
+  const prevTail = new Set(prev.slice(Math.max(0, served - guard), served));
 
   // Push any card that appeared in the previous deck's tail out of this deck's
   // head, swapping it with the first card further down that is safe. Purely

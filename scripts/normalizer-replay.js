@@ -91,12 +91,6 @@ for (const [, list] of groups) {
     merges.get(n).add(raw);
   }
 
-  // Answers that landed in a bucket with someone they were not with before.
-  for (const [n, total] of after) {
-    const wasSeparate = [...before.entries()].filter(([, c]) => c > 0).length;
-    if (wasSeparate > after.size) moved += 0; // counted below instead
-  }
-
   const topBefore = [...before.entries()].sort((a, b) => b[1] - a[1])[0];
   const topAfter = [...after.entries()].sort((a, b) => b[1] - a[1])[0];
   if (topBefore && topAfter && oldNormalize(topAfter[0]) !== topBefore[0] && topAfter[1] !== topBefore[1]) {
