@@ -58,7 +58,23 @@ const clientIp = (req) =>
   (req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '').toString().split(',')[0].trim();
 
 const str = (v, max) => (v == null ? '' : String(v).slice(0, max));
-const clean = (code) => str(code, 12).toUpperCase().replace(/[^A-Z0-9]/g, '');
+/*
+  Normalise a pack code for lookup.
+
+  Hyphens are now part of the format (codes are built from the pack's name), so
+  stripping them — as this did — makes every named pack unfindable. The 12-char
+  cap did the same to anything longer than the old random form.
+
+  Still forgiving about everything else: case, spaces a phone inserted, a
+  trailing full stop from an email. Old six-character codes normalise exactly as
+  before, so nothing already issued changes meaning.
+*/
+const clean = (code) =>
+  str(code, 48)
+    .toUpperCase()
+    .replace(/[^A-Z0-9-]/g, '')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
 
 const router = express.Router();
 
@@ -88,7 +104,7 @@ router.post('/', async (req, res) => {
     const pairs = isPairs ? parsed.items : [];
     const count = parsed.count;
 
-    const packCode = await CustomPack.generatePackCode();
+    const packCode = await CustomPack.generatePackCode(title);
     await CustomPack.create({
       packCode, game, title, questions, mcq, pairs,
       creatorAnonId: str(b.anonId, 40),

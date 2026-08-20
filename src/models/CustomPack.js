@@ -68,12 +68,77 @@ const customPackSchema = new mongoose.Schema({
   lastUsedAt: { type: Date, default: Date.now, expires: 60 * 60 * 24 * 180 },
 });
 
-customPackSchema.statics.generatePackCode = async function generatePackCode() {
-  for (let attempt = 0; attempt < 12; attempt++) {
-    let code = '';
-    for (let i = 0; i < 6; i++) {
-      code += CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)];
-    }
+/*
+  Codes are built from the pack's NAME, not from noise.
+
+  They used to be six random characters — QXUME5, CEPPPT. A Community
+  Coordinator at Cancer Council wrote five packs for a work event and then
+  emailed us, because she could not tell which code was which, and because a
+  six-character code looks nothing like the four-letter ROOM code her players
+  would type. Two different codes, two different lengths, no way to tell them
+  apart. "CISS-DIVISION-LETTER-S-K7X" is unmistakably neither a room code nor
+  one of her other four packs.
+
+  The three-character suffix is not decoration. The model's whole promise is
+  that a pack code is a bearer token — whoever holds it can play it, and nothing
+  is listed or searchable. A bare slug would be guessable, quietly turning a
+  private document into one anybody could stumble into by typing an obvious
+  name. The suffix keeps the code readable AND unguessable: 32^3 possibilities
+  behind a name someone can actually say out loud.
+
+  Falls back to the old six-character form when a title gives us nothing usable
+  — an untitled pack, or one named entirely in emoji.
+*/
+
+const MAX_SLUG = 24;   // long enough for a real title, short enough to retype
+const SUFFIX_LEN = 3;
+
+export function slugifyTitle(title) {
+  const base = String(title || '')
+    /*
+      Strip accents rather than deleting the letters under them. Without this,
+      "Café Münchën" became "CAF-M-NCH-N" — every accented character turned into
+      a separator and the name was destroyed. A third of this site's traffic is
+      outside the US and people name things in their own language.
+    */
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toUpperCase()
+    .replace(/&/g, ' AND ')
+    .replace(/[^A-Z0-9]+/g, '-')   // everything else becomes a separator
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+
+  if (base.length <= MAX_SLUG) return base;
+
+  /*
+    Truncate on a word boundary, not mid-syllable. Slicing blind gave
+    "YEAR-7-SCIENCE-TERM-3-RE", which reads like a corrupted string rather than
+    a name — and the whole point of this change is that the code looks like the
+    thing it belongs to. Falls back to a hard slice only when the first word is
+    itself longer than the limit.
+  */
+  const cut = base.slice(0, MAX_SLUG + 1);
+  const lastBreak = cut.lastIndexOf('-');
+  const trimmed = lastBreak > 0 ? cut.slice(0, lastBreak) : base.slice(0, MAX_SLUG);
+  return trimmed.replace(/-$/, '');
+}
+
+const randomChars = (n) => {
+  let out = '';
+  for (let i = 0; i < n; i += 1) {
+    out += CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)];
+  }
+  return out;
+};
+
+customPackSchema.statics.generatePackCode = async function generatePackCode(title) {
+  const slug = slugifyTitle(title);
+
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    // A fresh suffix each attempt, so a clash is resolved by the random part
+    // rather than by mangling the name the host chose.
+    const code = slug ? `${slug}-${randomChars(SUFFIX_LEN)}` : randomChars(6);
     // eslint-disable-next-line no-await-in-loop
     const clash = await this.exists({ packCode: code });
     if (!clash) return code;
