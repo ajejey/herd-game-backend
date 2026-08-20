@@ -10,9 +10,11 @@
     "build": "echo 'No build step needed for backend'",
     "check:banks": "node scripts/content-bank-check.js",
     "check:logic": "node scripts/clover-logic-check.js && node scripts/fishbowl-logic-check.js && node scripts/taboo-logic-check.js && node scripts/herd-scoring-check.js",
-    "check:all": "npm run check:banks && npm run check:logic && npm run check:packcodes",
+    "check:all": "npm run check:banks && npm run check:logic && npm run check:packcodes && npm run check:crossgame && npm run check:funnel",
     "check:sockets": "node scripts/join-check.js",
-    "check:packcodes": "node scripts/pack-code-check.js"
+    "check:packcodes": "node scripts/pack-code-check.js",
+    "check:crossgame": "node scripts/cross-game-check.js",
+    "check:funnel": "node scripts/funnel-check.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

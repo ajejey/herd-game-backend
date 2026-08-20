@@ -64,7 +64,13 @@ export async function loadRoom(roomCode) {
     if (!conn) return null;
     const doc = await conn.collection(COLLECTION).findOne({ roomCode });
     if (!doc || !doc.state) return null;
-    return { state: doc.state, tokens: doc.tokens || [] };
+    /*
+      `namespace` is returned, not just stored. Every engine game shares one
+      room store, so a caller that restores a snapshot without checking which
+      game it belongs to writes another game's room into memory under the wrong
+      game — the restart-path twin of the cross-game join bug.
+    */
+    return { state: doc.state, tokens: doc.tokens || [], namespace: doc.namespace || null };
   } catch {
     return null;
   }

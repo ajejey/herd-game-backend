@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto';
 import * as store from './store.js';
 import { logEvent } from '../analytics.js';
 import { snapshotRoom, loadRoom } from './persistence.js';
+import { wrongGameMessage } from './gameDirectory.js';
 
 const HOST_MIGRATION_DELAY_MS = 20_000; // migrate host after 20s offline
 
@@ -110,6 +111,17 @@ export function mountGame(io, namespacePath, gameDef) {
         status: 'lobby',
         players: [player],
         ...gameDef.createInitialState(settings),
+        /*
+          Which game this room IS, set AFTER the spread so a game can never
+          overwrite it — this is an engine invariant, not a game's own field.
+
+          Every engine game shares one room store. Without this, a code typed on
+          the wrong game's page resolved perfectly and put that person inside
+          another game's room: 1.6% of all rooms over 30 days, and the cause of
+          every "not working" report we could trace. Nothing threw, so nothing
+          was ever reported as an error — only the player's screen was wrong.
+        */
+        game: namespacePath,
         createdAt: Date.now(),
       };
 
@@ -135,13 +147,41 @@ export function mountGame(io, namespacePath, gameDef) {
 
       // Survive a server restart: if the room isn't in memory, try restoring it
       // from the last snapshot before giving up (so rejoin links still work).
+      //
+      // The namespace check happens BEFORE restoring, not after. Restoring is a
+      // write: pulling another game's room into the shared store under the
+      // wrong game is worse than merely reading one, and the snapshot has
+      // always recorded which namespace it belongs to.
       if (!state && code) {
         const snap = await loadRoom(code);
-        if (snap) { store.restoreGame(code, snap.state, snap.tokens); state = store.getGame(code); }
+        if (snap && snap.namespace && snap.namespace !== namespacePath) {
+          return emitError(socket, wrongGameMessage(snap.namespace), 'WRONG_GAME');
+        }
+        if (snap) {
+          // Stamp the game on the way back in, so a room snapshotted before
+          // this field existed is protected from the next join onwards rather
+          // than staying permanently unguarded.
+          if (snap.state && !snap.state.game && snap.namespace) snap.state.game = snap.namespace;
+          store.restoreGame(code, snap.state, snap.tokens);
+          state = store.getGame(code);
+        }
       }
 
       if (!state) {
         return emitError(socket, 'Room not found. Check your code.', 'ROOM_NOT_FOUND');
+      }
+
+      /*
+        The code is valid — for a different game. Say which one rather than
+        "not found", because the player is not holding a wrong code, they are
+        standing on the wrong page, and that is a one-tap problem once told.
+
+        A room with no `game` predates this field and is left alone: during the
+        deploy that rolls this out, every room already in memory is one of
+        those, and refusing them would drop live games mid-round.
+      */
+      if (state.game && state.game !== namespacePath) {
+        return emitError(socket, wrongGameMessage(state.game), 'WRONG_GAME');
       }
 
       // ── Rejoin path ──
