@@ -20,7 +20,7 @@
  *
  * Needs no database.
  */
-import { slugifyTitle } from '../src/models/CustomPack.js';
+import { slugifyTitle, PACK_GAMES as PACK_GAMES_ENUM } from '../src/models/CustomPack.js';
 
 /* Kept in step with packs.js `clean` by pack-code-check itself: if that
    function changes and this copy does not, the mismatch tests below fail. */
@@ -115,6 +115,20 @@ import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const FE = path.join(here, '..', '..', 'frontend', 'src', 'components', 'custom', 'CustomPack.js');
 
+/*
+  packCode.js is ESM inside a CRA app, so it cannot simply be imported from a
+  backend script. Evaluating its source keeps ONE definition of these rules
+  rather than a second copy here that would drift — which is the whole point of
+  this file. Stripping `export ` wholesale, not `export function`: a later
+  `export const` broke that narrower version the day it was added.
+*/
+function loadPackCodeLib() {
+  const src = fs.readFileSync(
+    path.join(here, '..', '..', 'frontend', 'src', 'lib', 'packCode.js'), 'utf8');
+  return new Function(`${src.replace(/^export /gm, '')}
+    return { cleanPackCode, describeRoomCodeMistake, sanitizeCodeInput, PACK_GAMES, packPlayPath };`)();
+}
+
 if (fs.existsSync(FE)) {
   const src = fs.readFileSync(FE, 'utf8');
   const maxMatch = src.match(/const MAX_SLUG_PREVIEW = (\d+);/);
@@ -143,9 +157,136 @@ if (fs.existsSync(FE)) {
   console.log('  (frontend not present, skipping preview drift check)');
 }
 
-console.log(`pack code round trip — ${ok.length} checks\n`);
+
+
+/*
+  ── The join box, in every game ──────────────────────────────────────────────
+
+  A pack ID is only useful if the site tells you when you have put one in the
+  wrong box. Two bugs got there first, both silent, both in the input handler:
+
+    maxLength={4}                        truncated a pasted ID to four characters
+    .replace(/[^A-Z]/g, '')              ate every hyphen and digit as you typed
+
+  Neither threw. Both produced a code the server could not find and an error
+  message that blamed the code. And they were each present in SOME games and not
+  others, which is the part a spot-check never catches — the fix for one game
+  said nothing about the other ten.
+
+  So this asserts across EVERY game home at once, including ones not written
+  yet: one shared sanitiser, no bespoke strip, room enough for a named ID, and
+  the explanation actually rendered.
+*/
+if (fs.existsSync(FE)) {
+  const COMPONENTS = path.join(here, '..', '..', 'frontend', 'src', 'components');
+
+  const homes = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.isFile() && /Home\.js$/.test(entry.name)) homes.push(full);
+    }
+  };
+  walk(COMPONENTS);
+
+  const joinBoxes = homes.filter((f) => {
+    const src = fs.readFileSync(f, 'utf8');
+    return /placeholder="(Room code|6-LETTER CODE)/i.test(src);
+  });
+
+  check('every game home with a join box was found', joinBoxes.length >= 12,
+    `${joinBoxes.length} found`);
+
+  for (const file of joinBoxes) {
+    const name = path.basename(file);
+    const src = fs.readFileSync(file, 'utf8');
+
+    check(`${name} sanitises the code field through the shared rule`,
+      /set(Code|RoomCode)\(sanitizeCodeInput\(/.test(src),
+      'must use sanitizeCodeInput, not a local .toUpperCase()/.replace()');
+
+    check(`${name} does not strip hyphens or digits while typing`,
+      !/\.replace\(\/\[\^A-Z\]\/g/.test(src),
+      'a local [^A-Z] strip destroys every pasted pack ID');
+
+    check(`${name} explains a pack ID in the room-code box`,
+      /<JoinCodeHelp/.test(src));
+
+    /* A named ID is up to 28 characters. Any cap below that silently truncates
+       the paste, which is exactly how this started. */
+    const caps = [...src.matchAll(/maxLength=\{(\d+)\}/g)].map((m) => Number(m[1]));
+    const codeCaps = caps.filter((n) => n !== 20); // 20 is the name field
+    check(`${name} leaves room for a full pack ID`,
+      codeCaps.every((n) => n >= 32),
+      `maxLength ${codeCaps.join(', ') || 'none'}`);
+  }
+
+  /* The describer itself, run against the shapes people actually paste. */
+  const { describeRoomCodeMistake: describe, sanitizeCodeInput: sanitize } = loadPackCodeLib();
+
+  check('a named pack ID in a 4-letter box is called a pack ID',
+    describe('CISS-DIVISION-LETTER-S-K7X', 4, { typing: true })?.packId === true);
+  check('a legacy 6-character pack ID in a 4-letter box is flagged',
+    describe('QXUME5', 4, { typing: true })?.packId === true);
+  check('a real 4-letter room code is left alone',
+    describe('ABCD', 4, { typing: true }) === null);
+  check('a half-typed room code stays quiet while typing',
+    describe('AB', 4, { typing: true }) === null);
+  check('a half-typed room code is explained after a failed join',
+    describe('AB', 4)?.message.includes('4 letters') === true);
+  check('an empty box says nothing', describe('', 4, { typing: true }) === null);
+  check('a legacy 6-character room code is left alone on the herd page',
+    describe('QXUME5', 6, { typing: true }) === null);
+
+  /* Typing must be possible, not just pasting: a sanitiser that trims trailing
+     hyphens makes a hyphen impossible to enter by hand. */
+  check('a hyphen can be typed one keystroke at a time',
+    sanitize('CISS-') === 'CISS-', sanitize('CISS-'));
+  check('typing keeps digits', sanitize('K7X') === 'K7X');
+  check('typing drops junk', sanitize('ab cd!') === 'ABCD');
+}
+
+/*
+  ── Where a pack can be played ───────────────────────────────────────────────
+
+  A pack is written FOR one game, and only five of the twelve games can take one
+  at all. The join-box signpost looks a pasted ID up and offers to open it in
+  the game it belongs to, which means a frontend map of game -> route.
+
+  The backend enum is the source of truth for which games those are. If someone
+  adds a sixth pack game there and not here, the signpost silently sends every
+  pack of that new kind to the wrong place — a redirect that looks like it
+  worked. So compare the two directly.
+*/
+{
+  const feMap = loadPackCodeLib().PACK_GAMES;
+  const feIds = Object.keys(feMap).sort();
+  const beIds = [...PACK_GAMES_ENUM].sort();
+
+  check('the frontend and backend agree on which games take a pack',
+    feIds.join(',') === beIds.join(','), `frontend [${feIds}] vs backend [${beIds}]`);
+
+  for (const id of beIds) {
+    check(`${id} has a route the signpost can send a host to`,
+      !!(feMap[id] && feMap[id].path && feMap[id].path.startsWith('/')),
+      feMap[id] ? String(feMap[id].path) : 'missing');
+    check(`${id} has a name a host would recognise`,
+      !!(feMap[id] && feMap[id].name && feMap[id].name.length > 2));
+  }
+
+  /* The pack page used to keep its own copy of this map. It must not again. */
+  const cp = fs.readFileSync(
+    path.join(here, '..', '..', 'frontend', 'src', 'components', 'custom', 'CustomPack.js'), 'utf8');
+  check('the pack page uses the shared map rather than a second copy',
+    /packPlayPath/.test(cp) && !/const PLAY_PATHS = \{/.test(cp));
+}
+
+console.log(`pack code round trip — ${ok.length} checks
+`);
 if (problems.length) {
-  console.error(`${problems.length} problem(s):\n`);
+  console.error(`${problems.length} problem(s):
+`);
   problems.forEach((p, i) => console.error(`  ${i + 1}. ${p}`));
   process.exit(1);
 }
@@ -153,3 +294,6 @@ console.log('  every generated code survives lookup normalisation');
 console.log('  every mangled form recovers to the original');
 console.log('  every legacy six-character code is untouched');
 console.log('  no input normalises to an empty code');
+console.log('  the preview and the server agree on every title');
+console.log('  every join box shares one sanitiser and explains a pack ID');
+console.log('  the signpost can route every kind of pack to its own game');
