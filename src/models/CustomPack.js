@@ -1,9 +1,13 @@
 import mongoose from 'mongoose';
 
 /*
-  A host-written set of questions, addressed by a short PACK CODE.
+  A host-written set of questions, addressed by a PACK ID.
 
-  Deliberately has no owner account. The pack code is a bearer token, exactly
+  Called an ID, not a code, on screen and here: the site already has ROOM codes,
+  and two different things both called "code" is what sent a real host to our
+  inbox unable to tell which was which.
+
+  Deliberately has no owner account. The pack ID is a bearer token, exactly
   like the four-letter room code players already trust: whoever has it can play
   it. That buys the two things the two hosts who wrote in actually asked for —
   reuse ("run it again next term") and cross-device ("write it on a laptop,
@@ -80,7 +84,7 @@ const customPackSchema = new mongoose.Schema({
   one of her other four packs.
 
   The three-character suffix is not decoration. The model's whole promise is
-  that a pack code is a bearer token — whoever holds it can play it, and nothing
+  that a pack ID is a bearer token — whoever holds it can play it, and nothing
   is listed or searchable. A bare slug would be guessable, quietly turning a
   private document into one anybody could stumble into by typing an obvious
   name. The suffix keeps the code readable AND unguessable: 32^3 possibilities
@@ -143,7 +147,7 @@ customPackSchema.statics.generatePackCode = async function generatePackCode(titl
     const clash = await this.exists({ packCode: code });
     if (!clash) return code;
   }
-  throw new Error('Could not allocate a pack code');
+  throw new Error('Could not allocate a pack ID');
 };
 
 /*

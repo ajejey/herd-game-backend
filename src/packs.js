@@ -59,7 +59,7 @@ const clientIp = (req) =>
 
 const str = (v, max) => (v == null ? '' : String(v).slice(0, max));
 /*
-  Normalise a pack code for lookup.
+  Normalise a pack ID for lookup.
 
   Hyphens are now part of the format (codes are built from the pack's name), so
   stripping them — as this did — makes every named pack unfindable. The 12-char
@@ -158,7 +158,7 @@ router.get('/:code', async (req, res) => {
     if (!packCode) return res.status(400).json({ ok: false, error: 'Missing code' });
 
     const pack = await CustomPack.findOne({ packCode }).lean();
-    if (!pack) return res.status(404).json({ ok: false, error: 'No pack with that code. Check for a typo.' });
+    if (!pack) return res.status(404).json({ ok: false, error: 'No pack with that ID. Check for a typo — it is the ID you got when you saved the pack, not a room code.' });
     if (pack.reported) return res.status(410).json({ ok: false, error: 'That pack is unavailable.' });
 
     const isMcq = pack.game === 'teamtrivia';

@@ -93,6 +93,56 @@ check(
   `${slugifyTitle('Letter S')}-K7X`
 );
 
+
+/*
+  The frontend previews the ID as you type the name, which means the slug rule
+  now exists twice: slugifyTitle here, previewSlug in
+  frontend/src/components/custom/CustomPack.js.
+
+  Two copies of one rule drift, and this pair drifts SILENTLY — the preview just
+  starts promising an ID the server will not issue. The first version did
+  exactly that within minutes of being written: it showed
+  "CISS-DIVISION-LETTER-..." for a title the server turns into
+  "CISS-DIVISION-LETTER-S".
+
+  So the frontend copy is read out of its own source and run against the same
+  titles. No HTTP, no build step — edit one and not the other and this fails.
+*/
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const FE = path.join(here, '..', '..', 'frontend', 'src', 'components', 'custom', 'CustomPack.js');
+
+if (fs.existsSync(FE)) {
+  const src = fs.readFileSync(FE, 'utf8');
+  const maxMatch = src.match(/const MAX_SLUG_PREVIEW = (\d+);/);
+  const fnMatch = src.match(/function previewSlug\(title\) \{[\s\S]*?\n\}/);
+
+  check('frontend exposes MAX_SLUG_PREVIEW', !!maxMatch);
+  check('frontend exposes previewSlug', !!fnMatch);
+
+  if (maxMatch && fnMatch) {
+    check('preview slug length matches the server', Number(maxMatch[1]) === 24,
+      `frontend ${maxMatch[1]}, server 24`);
+
+    const previewSlug = new Function(
+      `const MAX_SLUG_PREVIEW = ${maxMatch[1]}; ${fnMatch[0]}; return previewSlug;`
+    )();
+
+    for (const title of TITLES) {
+      const server = slugifyTitle(title);
+      const preview = previewSlug(title);
+      const expected = server || 'YOUR-PACK';
+      check(`preview matches server for "${title}"`, preview === expected,
+        `preview ${preview}, server ${expected}`);
+    }
+  }
+} else {
+  console.log('  (frontend not present, skipping preview drift check)');
+}
+
 console.log(`pack code round trip — ${ok.length} checks\n`);
 if (problems.length) {
   console.error(`${problems.length} problem(s):\n`);

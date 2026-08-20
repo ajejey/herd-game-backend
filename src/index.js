@@ -149,7 +149,7 @@ app.use('/api/push', pushRouter);
 // Player-submitted problem reports (keeps complaints out of the Play reviews)
 app.use('/api/feedback', feedbackRouter);
 
-// Host-written custom question packs, addressed by pack code (no accounts).
+// Host-written custom question packs, addressed by pack ID (no accounts).
 app.use('/api/packs', packsRouter);
 
 // ── Observability: is the single instance near capacity? ─────────────────────
@@ -285,7 +285,7 @@ io.on('connection', (socket) => {
       const roomCode = await Game.generateRoomCode();
       console.log('Generated room code:', roomCode);
 
-      // A bad or expired pack code must never stop the room being created —
+      // A bad or expired pack ID must never stop the room being created —
       // fall through to the built-in questions instead of failing the host.
       const customQuestions = packCode ? await usePack(packCode) : null;
 
