@@ -26,6 +26,7 @@ export const GAME_DIRECTORY = {
   '/wyr': { name: 'Would You Rather', path: '/would-you-rather' },
   '/fishbowl': { name: 'Fishbowl', path: '/fishbowl' },
   '/taboo': { name: 'Taboo', path: '/taboo' },
+  '/cavemanclues': { name: 'Caveman Clues', path: '/caveman-clues' },
 };
 
 export function describeGame(namespace) {

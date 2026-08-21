@@ -2,7 +2,7 @@ import express from 'express';
 import mongoose from 'mongoose';
 
 /*
-  User-submitted problem reports.
+  User-submitted problem reports AND game suggestions.
 
   Separate from client_errors on purpose. Those are machine-generated, noisy and
   TTL'd away after 30 days. These are a human taking the trouble to tell us
@@ -44,12 +44,26 @@ function rateLimited(ip) {
 
 const str = (v, max) => (v == null ? '' : String(v).slice(0, max));
 
+/*
+  Two kinds of message arrive here, and they want different reading.
+
+  A problem is a defect and belongs in triage. A suggestion is a wish and
+  belongs in a backlog — mixing them means either the wishes drown the bugs, or
+  someone triaging bugs keeps closing wishes as "not reproducible".
+
+  Anything unrecognised is treated as a problem, which is the safe direction: a
+  suggestion filed as a bug gets read, a bug filed as a wish does not.
+*/
+const KINDS = new Set(['problem', 'suggestion']);
+const kindOf = (v) => (KINDS.has(String(v)) ? String(v) : 'problem');
+
 export function ensureFeedbackIndexes() {
   try {
     const conn = mongoose.connection;
     if (!conn || conn.readyState !== 1) return;
     conn.collection(COLLECTION).createIndex({ createdAt: -1 }).catch(() => {});
     conn.collection(COLLECTION).createIndex({ handled: 1, createdAt: -1 }).catch(() => {});
+    conn.collection(COLLECTION).createIndex({ kind: 1, createdAt: -1 }).catch(() => {});
   } catch {
     /* no-op */
   }
@@ -75,6 +89,7 @@ router.post('/', async (req, res) => {
       .collection(COLLECTION)
       .insertOne({
         message,
+        kind: kindOf(b.kind),                 // 'problem' | 'suggestion'
         email: str(b.email, 200).trim(),      // optional; only if they want a reply
         page: str(b.page, 300),
         game: str(b.game, 60),

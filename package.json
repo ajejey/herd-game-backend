@@ -10,11 +10,15 @@
     "build": "echo 'No build step needed for backend'",
     "check:banks": "node scripts/content-bank-check.js",
     "check:logic": "node scripts/clover-logic-check.js && node scripts/fishbowl-logic-check.js && node scripts/taboo-logic-check.js && node scripts/herd-scoring-check.js",
-    "check:all": "npm run check:banks && npm run check:logic && npm run check:packcodes && npm run check:crossgame && npm run check:funnel",
+    "check:all": "npm run check:banks && npm run check:logic && npm run check:packcodes && npm run check:crossgame && npm run check:funnel && npm run check:caveman && npm run check:escapes && npm run check:hub",
     "check:sockets": "node scripts/join-check.js",
     "check:packcodes": "node scripts/pack-code-check.js",
     "check:crossgame": "node scripts/cross-game-check.js",
-    "check:funnel": "node scripts/funnel-check.js"
+    "check:funnel": "node scripts/funnel-check.js",
+    "check:caveman": "node scripts/caveman-syllable-check.js && node scripts/caveman-logic-check.js && node scripts/caveman-authority-check.js",
+    "sync:syllables": "node scripts/sync-syllables.js",
+    "check:escapes": "node scripts/fix-word-boundaries.mjs",
+    "check:hub": "node scripts/hub-listing-check.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

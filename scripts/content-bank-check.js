@@ -25,6 +25,7 @@ import { QUESTIONS as triviaQs } from '../src/games/teamtrivia/questions.js';
 import { PROMPTS } from '../src/games/wouldyourather/wyrData.js';
 import { KEYWORDS } from '../src/games/clover/keywords.js';
 import { PAIRS } from '../src/games/wavelength/spectrums.js';
+import { CAVEMAN_WORDS } from '../src/games/cavemanclues/words.js';
 
 const REPEAT_LIMIT = 0.25; // at most a quarter repeated across two games
 
@@ -43,6 +44,26 @@ const BANKS = [
   { name: 'Would You Rather',       bank: PROMPTS,       perGame: 12, key: (p) => JSON.stringify(p).toLowerCase().slice(0, 120) },
   { name: 'Clover keywords',        bank: KEYWORDS,      perGame: 20, key: (k) => String(k).toLowerCase() },
   { name: 'Spectrum pairs',         bank: PAIRS,         perGame: 12, key: (p) => JSON.stringify(p).toLowerCase() },
+  { name: 'Caveman Clues words',    bank: CAVEMAN_WORDS, perGame: 16, key: (w) => String(w).toLowerCase() },
+];
+
+/*
+  US/UK spelling pairs the answer normaliser does NOT merge.
+
+  Guessing is exact-match, so a card reading "Harbour" scores a US player's
+  "harbor" as wrong — the game visibly refusing a correct answer, which is the
+  one thing a word game must never do. US traffic is 35% of the site and UK 14%,
+  so where the spellings differ the bank uses the US one.
+
+  Listed rather than derived: there is no rule that turns "doughnut" into
+  "donut". Add pairs as they come up.
+*/
+const SPELLING_PAIRS = [
+  ['harbour', 'harbor'], ['rumour', 'rumor'], ['doughnut', 'donut'],
+  ['colour', 'color'], ['favourite', 'favorite'], ['theatre', 'theater'],
+  ['aeroplane', 'airplane'], ['moustache', 'mustache'], ['pyjamas', 'pajamas'],
+  ['aluminium', 'aluminum'], ['tyre', 'tire'], ['kerb', 'curb'],
+  ['jewellery', 'jewelry'], ['plough', 'plow'], ['grey', 'gray'],
 ];
 
 let failures = 0;
@@ -90,4 +111,16 @@ if (failures) {
   console.error('about Taboo on 4 Aug 2026.');
   process.exit(1);
 }
+{
+  const banked = new Set(CAVEMAN_WORDS.map((w) => String(w).toLowerCase()));
+  const wrongSide = SPELLING_PAIRS.filter(([uk]) => banked.has(uk)).map(([uk, us]) => `${uk} -> use ${us}`);
+  if (wrongSide.length) {
+    console.error('\nCaveman Clues cards spelled the way the smaller audience types them:\n');
+    wrongSide.forEach((w, i) => console.error(`  ${i + 1}. ${w}`));
+    failures += wrongSide.length;
+  } else {
+    console.log('  Caveman Clues uses the spelling its larger audience types');
+  }
+}
+
 console.log('\nAll content banks can cover two back-to-back games with under 25% repetition.');
