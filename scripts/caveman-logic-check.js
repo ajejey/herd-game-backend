@@ -12,6 +12,8 @@
  * No database, no browser, no server.
  */
 import { CavemanCluesGame as G } from '../src/games/cavemanclues/game.js';
+import { CAVEMAN_WORDS, shuffledDeck } from '../src/games/cavemanclues/words.js';
+import { readFileSync, existsSync } from 'fs';
 
 let failures = 0;
 const fail = (m, d = '') => { console.log(`  FAIL  ${m}${d ? ' — ' + d : ''}`); failures += 1; };
@@ -391,6 +393,83 @@ while (long.phase !== 'finished' && steps < 60) {
   steps += 1;
 }
 is('the round counter never overruns its total', steps < 60 && long.phase === 'finished');
+
+/* ── Freshness across games ──────────────────────────────────────────────────
+
+   A deck never repeats WITHIN a game — that was always true and is checked
+   above. This is the other half: a host who plays every week used to get a
+   repeat in most games, because each game reshuffled the whole bank from
+   scratch. Their browser now sends what it has already been dealt.
+
+   The trap this guards is the obvious implementation. FILTERING the seen words
+   out gives a host who has seen 320 of 328 an eight-card deck and a game that
+   ends after two rounds — the fix breaking the game for the exact people it
+   exists to serve. They must be re-ORDERED, never removed.
+*/
+{
+  const seen = CAVEMAN_WORDS.slice(0, 40);
+  const deck = shuffledDeck(seen);
+  is('excluding words still deals the whole bank', deck.length === CAVEMAN_WORDS.length,
+    `${deck.length} of ${CAVEMAN_WORDS.length}`);
+  is('...with no duplicates', new Set(deck).size === deck.length);
+
+  const seenSet = new Set(seen);
+  const firstSeenAt = deck.findIndex((w) => seenSet.has(w));
+  is('none of the seen words are dealt before the fresh ones',
+    firstSeenAt === CAVEMAN_WORDS.length - seen.length, `first repeat at index ${firstSeenAt}`);
+
+  /* The budget is 16 cards a game, so a 40-word exclusion has to cover it. */
+  const dealt = deck.slice(0, 16);
+  is('a normal game deals nothing the host has seen', dealt.every((w) => !seenSet.has(w)));
+
+  /* Case sensitivity and whitespace: a browser round-trip through JSON is not
+     guaranteed to hand back the exact string, and a seen-list that silently
+     stops matching is a fix that quietly turns itself off. */
+  const messy = shuffledDeck(seen.map((w) => ` ${w.toUpperCase()} `));
+  is('the seen-list matches regardless of case or spacing',
+    messy.slice(0, 16).every((w) => !seenSet.has(w)));
+
+  /* The starvation case, played for real. */
+  const nearlyAll = CAVEMAN_WORDS.slice(0, CAVEMAN_WORDS.length - 4);
+  const starved = shuffledDeck(nearlyAll);
+  is('excluding almost the whole bank still deals a full deck',
+    starved.length === CAVEMAN_WORDS.length, `${starved.length} cards`);
+  const withList = G.deriveClientState(fresh(4, { rounds: 4, exclude: nearlyAll }), 'p1');
+  const without = G.deriveClientState(fresh(4, { rounds: 4 }), 'p1');
+  is('...and the game is exactly as long as it would have been',
+    withList.totalTurns === without.totalTurns, `${withList.totalTurns} vs ${without.totalTurns}`);
+  is('the seen-list never reaches a player', withList.exclude === undefined);
+
+  /*
+    The two caps must not drift. The browser remembers CAP words and the server
+    honours the first N of whatever arrives; if the server's N ever drops below
+    the browser's CAP, the oldest part of the seen-list is silently discarded
+    and the fix quietly half-works, which is worse than not working — nothing
+    fails, the repeats just come back.
+  */
+  const clientPath = new URL('../../frontend/src/lib/recentWords.js', import.meta.url);
+  /* Railway deploys backend/ alone, so a frontend read has to be optional —
+     the convention every other check in this directory already follows. */
+  if (existsSync(clientPath)) {
+    const clientSrc = readFileSync(clientPath, 'utf8');
+    const serverSrc = readFileSync(
+      new URL('../src/games/cavemanclues/game.js', import.meta.url), 'utf8',
+    );
+    const clientCap = Number((clientSrc.match(/const CAP = (\d+)/) || [])[1]);
+    const serverCap = Number((serverSrc.match(/settings\.exclude[\s\S]{0,80}?slice\(0, (\d+)\)/) || [])[1]);
+    is('both caps are readable', Number.isInteger(clientCap) && Number.isInteger(serverCap),
+      `client ${clientCap}, server ${serverCap}`);
+    is('the server honours everything the browser can send', serverCap >= clientCap,
+      `server caps at ${serverCap}, browser remembers up to ${clientCap}`);
+  }
+
+  /* Garbage in the settings must not throw or empty the deck. */
+  for (const bad of [null, 'Elephant', 42, {}, [1, 2, 3], [null, undefined]]) {
+    const d = shuffledDeck(bad);
+    if (d.length !== CAVEMAN_WORDS.length) fail('a malformed exclude list broke the deck', JSON.stringify(bad));
+  }
+  ok('a malformed seen-list is ignored rather than fatal');
+}
 
 /* ── Minimum players ─────────────────────────────────────────────────────── */
 is('three players is the floor', G.minPlayers === 3,

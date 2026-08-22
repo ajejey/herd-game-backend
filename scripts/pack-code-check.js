@@ -222,6 +222,69 @@ if (fs.existsSync(FE)) {
       `maxLength ${codeCaps.join(', ') || 'none'}`);
   }
 
+  /*
+    ── EVERY box that takes a pack ID, not just the game join boxes ──────────
+
+    The sweep above finds inputs by `placeholder="Room code"`. The one input on
+    the site whose ONLY job is reopening a saved pack has `placeholder="PACK
+    ID"`, so it was never in the set — and it sat at maxLength={8} after IDs
+    became name-based. Typing TERM-1-ICEBREAKERS-33V into "Already made one?
+    Open it again" silently became TERM-1-I, and the page answered "no pack with
+    that code" every single time. The feature was dead and nothing was red.
+
+    So the rule is stated by BEHAVIOUR — an input the user puts a pack ID into —
+    rather than by one spelling of a placeholder.
+  */
+  const PACK_INPUTS = [
+    { file: 'frontend/src/components/custom/CustomPack.js', testid: 'pack-lookup' },
+  ];
+  for (const { file, testid } of PACK_INPUTS) {
+    const full = path.join(here, '..', '..', ...file.split('/'));
+    const name = path.basename(file);
+    if (!fs.existsSync(full)) { problems.push(`${file} is gone — update PACK_INPUTS`); continue; }
+    const src = fs.readFileSync(full, 'utf8');
+    /*
+      indexOf returning -1 is the trap here. `slice(-1)` is the file's LAST
+      character rather than nothing, so a missing testid still produced a
+      non-empty `input` and the "exists" check passed — then the two real
+      assertions failed with `maxLength none`, which reads as a bug in the
+      input rather than a renamed hook. A sweep that survives a rename has to
+      say so when the thing it sweeps is gone.
+    */
+    const at = src.indexOf(`data-testid="${testid}"`);
+    if (at === -1) {
+      check(`${name}'s ${testid} exists`, false, 'renamed or removed — update PACK_INPUTS');
+      continue;
+    }
+    const end = src.indexOf('/>', at);
+    if (end === -1) {
+      check(`${name}'s ${testid} is a self-closing input`, false, 'no /> after the testid');
+      continue;
+    }
+    const input = src.slice(at, end + 2);
+    check(`${name}'s ${testid} exists`, true);
+
+    const cap = Number((input.match(/maxLength=\{(\d+)\}/) || [])[1]);
+    check(`${name}'s ${testid} leaves room for a full pack ID`, cap >= 32,
+      `maxLength ${cap || 'none'} — a named ID is up to 28 characters`);
+
+    check(`${name}'s ${testid} sanitises through the shared rule`,
+      /sanitizeCodeInput\(/.test(input),
+      'a local .replace(/[^A-Z]/g) destroys every hyphen in a named ID');
+  }
+
+  /* The error copy has to describe the ID people actually hold. It told them
+     "codes have no letter O or I", which is the retired six-character format —
+     so the one hint offered to someone who cannot find their pack was about a
+     kind of ID that no longer exists. */
+  {
+    const cp = path.join(here, '..', '..', 'frontend', 'src', 'components', 'custom', 'CustomPack.js');
+    const src = fs.existsSync(cp) ? fs.readFileSync(cp, 'utf8') : '';
+    check('the pack-not-found message describes a named ID',
+      !/no letter O or I/i.test(src),
+      'stale copy from the six-character format');
+  }
+
   /* The describer itself, run against the shapes people actually paste. */
   const { describeRoomCodeMistake: describe, sanitizeCodeInput: sanitize } = loadPackCodeLib();
 

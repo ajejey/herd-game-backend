@@ -25,7 +25,7 @@ import { QUESTIONS as triviaQs } from '../src/games/teamtrivia/questions.js';
 import { PROMPTS } from '../src/games/wouldyourather/wyrData.js';
 import { KEYWORDS } from '../src/games/clover/keywords.js';
 import { PAIRS } from '../src/games/wavelength/spectrums.js';
-import { CAVEMAN_WORDS } from '../src/games/cavemanclues/words.js';
+import { CAVEMAN_WORDS, CAVEMAN_WORDS_RAW, INTENTIONAL_DUPES } from '../src/games/cavemanclues/words.js';
 
 const REPEAT_LIMIT = 0.25; // at most a quarter repeated across two games
 
@@ -44,7 +44,15 @@ const BANKS = [
   { name: 'Would You Rather',       bank: PROMPTS,       perGame: 12, key: (p) => JSON.stringify(p).toLowerCase().slice(0, 120) },
   { name: 'Clover keywords',        bank: KEYWORDS,      perGame: 20, key: (k) => String(k).toLowerCase() },
   { name: 'Spectrum pairs',         bank: PAIRS,         perGame: 12, key: (p) => JSON.stringify(p).toLowerCase() },
-  { name: 'Caveman Clues words',    bank: CAVEMAN_WORDS, perGame: 16, key: (w) => String(w).toLowerCase() },
+  /*
+    `raw` is the list BEFORE deduplication. Without it this row's duplicate
+    count was structurally always zero — the bank it reads is already
+    `[...new Set(WORDS)]`, so the one guard aimed at accidental duplicates
+    could not fire on the bank most likely to grow by hand.
+    `allowedDupes` are the three words that genuinely belong to two categories.
+  */
+  { name: 'Caveman Clues words',    bank: CAVEMAN_WORDS, perGame: 16, key: (w) => String(w).toLowerCase(),
+    raw: CAVEMAN_WORDS_RAW, allowedDupes: INTENTIONAL_DUPES },
 ];
 
 /*
@@ -69,7 +77,7 @@ const SPELLING_PAIRS = [
 let failures = 0;
 const rows = [];
 
-for (const { name, bank, perGame, key } of BANKS) {
+for (const { name, bank, perGame, key, raw, allowedDupes } of BANKS) {
   const list = Array.isArray(bank) ? bank : Object.values(bank || {}).flat();
   const size = list.length;
 
@@ -77,8 +85,20 @@ for (const { name, bank, perGame, key } of BANKS) {
   const needed = perGame * 2;
   const repeatRate = size >= needed ? 0 : (needed - size) / needed;
 
-  const keys = list.map(key);
-  const dupes = keys.length - new Set(keys).size;
+  /*
+    Counted over the RAW list when a bank provides one. A bank that dedupes
+    itself on the way out reports zero duplicates no matter what was typed
+    into it, which is a check that reads as passing and is not running.
+  */
+  const allowed = new Set((allowedDupes || []).map((w) => key(w)));
+  const keys = (Array.isArray(raw) ? raw : list).map(key);
+  const seen = new Set();
+  const repeated = [];
+  for (const k of keys) {
+    if (seen.has(k) && !allowed.has(k)) repeated.push(k);
+    seen.add(k);
+  }
+  const dupes = repeated.length;
 
   const minForTwoGames = Math.ceil(needed / (1 - REPEAT_LIMIT));
   const ok = repeatRate <= REPEAT_LIMIT && dupes === 0;
@@ -124,3 +144,49 @@ if (failures) {
 }
 
 console.log('\nAll content banks can cover two back-to-back games with under 25% repetition.');
+
+/*
+  ── Two cards that are the same card ─────────────────────────────────────────
+
+  Caveman Clues has a constraint no other bank here has: the giver may only use
+  ONE-SYLLABLE words. That collapses distinctions the dictionary keeps. A giver
+  holding "Cyclone" can say "big wind", "spins", "wrecks the roof" — and every
+  one of those describes Hurricane, Tornado and Whirlwind just as well. Whoever
+  is holding it, half the room types one of the others and the game refuses an
+  answer that was, in every sense that matters, right.
+
+  It arrived by growing the bank: the weather category gained Hurricane,
+  Cyclone and Whirlwind in one sitting, next to the Tornado already there — a
+  four-way collision nobody could have spotted by reading down the list, because
+  each word is individually fine.
+
+  Not a general synonym checker, which would need a thesaurus and would argue
+  with every judgement call. A named list of pairs that have actually been
+  caught, so the next accidental twin is a failing check rather than a bad
+  round somebody plays through and does not report.
+*/
+const SAME_CARD = [
+  ['Oatmeal', 'Porridge'],      // one food, two dialects
+  ['Hurricane', 'Cyclone'],     // one storm, two regions
+  ['Tornado', 'Whirlwind'],
+  ['Tornado', 'Cyclone'],
+  ['Swamp', 'Marsh'],
+  ['Referee', 'Umpire'],
+  ['Ostrich', 'Emu'],           // "big bird, can't fly, runs fast" — both
+  ['Sofa', 'Couch'],
+  ['Elevator', 'Lift'],
+  ['Rabbit', 'Bunny'],
+];
+{
+  const have = new Set(CAVEMAN_WORDS.map((w) => w.toLowerCase()));
+  const clashes = SAME_CARD.filter(([a, b]) => have.has(a.toLowerCase()) && have.has(b.toLowerCase()));
+  if (clashes.length) {
+    failures += 1;
+    console.log(`
+  ${clashes.length} pair(s) of words the one-syllable rule cannot tell apart:`);
+    for (const [a, b] of clashes) console.log(`    ${a} / ${b} — keep one`);
+  } else {
+    console.log('  no two Caveman words collapse to the same clues');
+  }
+}
+

@@ -62,6 +62,16 @@ export const CavemanCluesGame = {
       customWords: Array.isArray(settings.customQuestions) && settings.customQuestions.length
         ? settings.customQuestions.slice(0, 200).map(String)
         : null,
+      /*
+        Words the HOST's browser has already been dealt, in past games. They go
+        to the back of the deck rather than out of it — see shuffledDeck. This
+        is what stops the tenth game in a row from feeling like the first one
+        again, and it is the host's list because the host is the person who
+        plays this repeatedly.
+      */
+      exclude: Array.isArray(settings.exclude)
+        ? settings.exclude.slice(0, 400).map(String)
+        : null,
       deck: [],
       deckIndex: 0,
       giverOrder: [],
@@ -87,7 +97,7 @@ export const CavemanCluesGame = {
       the same reason onPlayerDisconnect below is deliberately a no-op.
     */
     const everyone = state.players;
-    const deck = state.customWords ? shuffleOf(state.customWords) : shuffledDeck();
+    const deck = state.customWords ? shuffleOf(state.customWords) : shuffledDeck(state.exclude);
     const scores = {};
     everyone.forEach((p) => { scores[p.id] = 0; });
 
@@ -164,6 +174,9 @@ export const CavemanCluesGame = {
     // The rest of the deck is the next eight answers. It never leaves the server.
     delete base.deck;
     delete base.customWords;
+    /* Knowing which words are NOT coming is a hint, and 200 strings in every
+       payload to every player is a lot of bandwidth for a hint. */
+    delete base.exclude;
 
     /*
       "You tried to say the answer" is the giver's business alone. Telling a

@@ -22,6 +22,7 @@ import { SpectrumGame } from './games/wavelength/game.js';
 import { TwoTruthsGame } from './games/twotruths/game.js';
 import { ScattergoriesGame } from './games/scattergories/game.js';
 import { CavemanCluesGame } from './games/cavemanclues/game.js';
+import { HueMatchGame } from './games/huematch/game.js';
 import { WouldYouRatherGame } from './games/wouldyourather/game.js';
 import { FishbowlGame } from './games/fishbowl/game.js';
 import { TabooGame } from './games/taboo/game.js';
@@ -896,6 +897,7 @@ mountGame(io, '/wyr', WouldYouRatherGame);
 mountGame(io, '/fishbowl', FishbowlGame);
 mountGame(io, '/taboo', TabooGame);
 mountGame(io, '/cavemanclues', CavemanCluesGame);
+mountGame(io, '/huematch', HueMatchGame);
 
 const PORT = process.env.PORT || 3001;
 httpServer.listen(PORT, () => {

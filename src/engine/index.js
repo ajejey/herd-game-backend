@@ -53,12 +53,29 @@ export function mountGame(io, namespacePath, gameDef) {
     socket.emit('error', { message, code });
   }
 
-  function resolvePlayerBySocket(socketId) {
+  /*
+    EVERY room this socket is a player in, not the first one found.
+
+    One socket normally means one room, and the single-result version was right
+    for years. It stopped being right once a client could rejoin a remembered
+    room on connect and then create or join a different one — the socket is then
+    a live player in two rooms and nothing here ever calls socket.leave. On
+    disconnect the old version marked one of them offline and returned, leaving
+    a phantom player in the other, permanently `connected: true` against a dead
+    socket id. In Hue Match that phantom sits inside the "has everyone locked
+    in?" test forever, which is the stuck-room condition again — this time with
+    nobody who can even close a tab to clear it.
+
+    Returning a list costs nothing in the normal case (it has one entry) and
+    removes the whole class.
+  */
+  function resolvePlayersBySocket(socketId) {
+    const out = [];
     for (const [roomCode, state] of store.allGames()) {
       const player = state.players.find(p => p.socketId === socketId);
-      if (player) return { roomCode, state, player };
+      if (player) out.push({ roomCode, state, player });
     }
-    return null;
+    return out;
   }
 
   nsp.on('connection', (socket) => {
@@ -379,32 +396,30 @@ export function mountGame(io, namespacePath, gameDef) {
 
     // ── Disconnect ───────────────────────────────────────────────────────────
     socket.on('disconnect', safe(async () => {
-      const found = resolvePlayerBySocket(socket.id);
-      if (!found) return;
+      for (const { roomCode, state, player } of resolvePlayersBySocket(socket.id)) {
+        player.connected = false;
+        player.disconnectedAt = Date.now();
+        store.setGame(roomCode, state);
 
-      const { roomCode, state, player } = found;
-      player.connected = false;
-      player.disconnectedAt = Date.now();
-      store.setGame(roomCode, state);
+        const stillConnected = state.players.filter(p => p.connected);
 
-      const stillConnected = state.players.filter(p => p.connected);
+        // If no one is left, let the cleanup timer handle deletion
+        if (stillConnected.length === 0) continue;
 
-      // If no one is left, let the cleanup timer handle deletion
-      if (stillConnected.length === 0) return;
+        broadcast(roomCode);
 
-      broadcast(roomCode);
+        // Host migration: if host disconnected, migrate after delay
+        if (player.id === state.hostId) {
+          scheduleMigration(roomCode, stillConnected);
+        }
 
-      // Host migration: if host disconnected, migrate after delay
-      if (player.id === state.hostId) {
-        scheduleMigration(roomCode, stillConnected);
-      }
-
-      // Let game definition react to disconnect (e.g., skip a judge who left)
-      if (gameDef.onPlayerDisconnect) {
-        const newState = gameDef.onPlayerDisconnect(store.getGame(roomCode), player);
-        if (newState) {
-          store.setGame(roomCode, newState);
-          broadcast(roomCode);
+        // Let game definition react to disconnect (e.g., skip a judge who left)
+        if (gameDef.onPlayerDisconnect) {
+          const newState = gameDef.onPlayerDisconnect(store.getGame(roomCode), player);
+          if (newState) {
+            store.setGame(roomCode, newState);
+            broadcast(roomCode);
+          }
         }
       }
     }));

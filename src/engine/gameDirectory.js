@@ -27,6 +27,7 @@ export const GAME_DIRECTORY = {
   '/fishbowl': { name: 'Fishbowl', path: '/fishbowl' },
   '/taboo': { name: 'Taboo', path: '/taboo' },
   '/cavemanclues': { name: 'Caveman Clues', path: '/caveman-clues' },
+  '/huematch': { name: 'Hue Match', path: '/hue-match' },
 };
 
 export function describeGame(namespace) {
