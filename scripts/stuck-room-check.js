@@ -168,6 +168,56 @@ if (fs.existsSync(COMPONENTS)) {
   the host fallback widened who could, which is exactly the sort of second-order
   reach a sweep is for.
 */
+/*
+  A state-bearing payload is forwarded whole, never cherry-picked.
+
+  Twice in one file, two handlers apart. `game_joined` was destructured down to
+  three keys, so a player joining mid-game got gameStatus undefined and was
+  parked on the lobby for the rest of it. `game_created` was destructured down
+  to three keys, so the host was missing from their own room and the lobby asked
+  them to invite one friend too many.
+
+  Both were written the same way for the same reason: at the time the payload
+  really did only have three useful keys. The bug is not the keys, it is the
+  SHAPE — a handler that names its fields has to be edited every time the server
+  learns to say something new, and nobody remembers to.
+*/
+console.log('');
+console.log('§1d room state is forwarded whole, not cherry-picked');
+console.log('');
+
+if (fs.existsSync(COMPONENTS)) {
+  for (const file of ['Home.js', 'GameRoom.js']) {
+    const full = path.join(COMPONENTS, file);
+    if (!fs.existsSync(full)) continue;
+    const text = rendered(fs.readFileSync(full, 'utf8'));
+    for (const ev of ['game_created', 'game_joined', 'game_rejoined']) {
+      const at = text.indexOf(`'${ev}'`);
+      if (at === -1) continue;
+      /*
+        Brace-match the handler rather than taking a fixed window. A 700-char
+        slice ran past the end of this listener into the NEXT one, where
+        `payload: { players }` is perfectly correct, and reported a failure
+        against a handler that was already right. A check that cries wolf gets
+        deleted.
+      */
+      const arrow = text.indexOf('=>', at);
+      const open = arrow === -1 ? -1 : text.indexOf('{', arrow);
+      if (open === -1) continue;
+      let depth = 0;
+      let end = open;
+      for (let k = open; k < text.length; k += 1) {
+        if (text[k] === '{') depth += 1;
+        else if (text[k] === '}') { depth -= 1; if (depth === 0) { end = k; break; } }
+      }
+      const body = text.slice(open, end + 1);
+      const rebuilt = /payload:\s*\{/.test(body);
+      is(`${file} forwards the whole ${ev} payload`, !rebuilt,
+        'dispatch the object you received — a named-field literal goes stale the next time the server adds a field');
+    }
+  }
+}
+
 console.log('');
 console.log('§1c a state transition cannot be run twice');
 console.log('');

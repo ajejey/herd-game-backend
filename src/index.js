@@ -576,10 +576,24 @@ io.on('connection', (socket) => {
       socket.join(roomCode);
       console.log('Socket joined room:', roomCode);
 
-      socket.emit('game_created', { 
+      /*
+        Send the host their own player row.
+
+        Without it the creator's player list is empty until somebody ELSE joins,
+        because nothing else pushes one — create_game emits only this, and
+        players_updated is broadcast from join_game. So the first screen of the
+        game the site is named after told its host "Invite 2 more friends to
+        start" when they needed one, and showed "In the room (0)" while they
+        were standing in it.
+
+        Harmless-looking while the lobby only rendered an unlabelled row of
+        names. Not harmless once it started counting them.
+      */
+      socket.emit('game_created', {
         gameId: game._id,
         roomCode,
-        playerId: host._id
+        playerId: host._id,
+        players: [host]
       });
       console.log('Emitted game_created event');
     } catch (error) {
