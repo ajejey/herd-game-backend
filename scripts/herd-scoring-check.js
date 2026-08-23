@@ -216,5 +216,72 @@ const P = (id, score) => ({ _id: id, username: String(id).slice(-4), score });
 if (findWinner([], null) !== null) fail('an empty room produced a winner');
 else ok('no players, no winner');
 
+/*
+  -- The herd is printed the way a human spelled it ------------------------
+
+  `majorityAnswers` holds normalised keys, because that is what decides who
+  matched whom: spacing collapsed, articles dropped, plurals stemmed. The
+  results screen printed those keys, so a room that all said "cheese sandwich"
+  was told, in the biggest text on the page, that
+
+      The herd said  cheesesandwich
+
+  and a room that agreed on "running" was told the herd said "run". The
+  machine's spelling of a word is not a word, and the one screen where players
+  check whether the game understood them is the worst place to show it.
+
+  THE INVARIANT: whatever a client is handed to PRINT must be a string somebody
+  in the room actually typed. Never the key it is counted under.
+*/
+console.log('');
+console.log('=== the herd is printed as somebody typed it ===');
+
+await withAnswers(
+  [{ p: 'a', n: 'cheesesandwich', o: 'cheese sandwich' },
+   { p: 'b', n: 'cheesesandwich', o: 'Cheese Sandwich' },
+   { p: 'c', n: 'cheesesandwich', o: 'cheese sandwich' },
+   { p: 'd', n: 'apple', o: 'apple' }],
+  async () => {
+    const r = await analyzeRoundAnswers('round');
+    if (r.majorityAnswers[0] !== 'cheesesandwich') fail('the scoring key changed — matching runs on that');
+    else if (!r.majorityLabels || r.majorityLabels.length !== 1) fail('no printable label was produced');
+    else if (r.majorityLabels[0] !== 'cheese sandwich') fail(`printed "${r.majorityLabels[0]}", not the spelling three people used`);
+    else ok('the label is the commonest real spelling, not the normalised key');
+  },
+);
+
+await withAnswers(
+  [{ p: 'a', n: 'run', o: 'running' }, { p: 'b', n: 'run', o: 'running' }],
+  async () => {
+    const r = await analyzeRoundAnswers('round');
+    if (r.majorityLabels[0] !== 'running') fail(`a stemmed word printed as "${r.majorityLabels[0]}"`);
+    else ok('a stemmed word prints as the word, not the stem');
+  },
+);
+
+/* The general form, so it holds for spellings nobody has thought of yet:
+   every label must be traceable to an answer somebody gave. */
+await withAnswers(
+  [{ p: 'a', n: 'ros', o: 'Roses' }, { p: 'b', n: 'ros', o: 'roses' },
+   { p: 'c', n: 'tulip', o: 'Tulips' }, { p: 'd', n: 'tulip', o: 'tulips' }],
+  async () => {
+    const r = await analyzeRoundAnswers('round');
+    const typed = new Set(r.allAnswers.map((a) => a.answer));
+    const bad = (r.majorityLabels || []).filter((l) => !typed.has(l));
+    if (bad.length) fail(`printed something nobody said: ${bad.join(', ')}`);
+    else if (r.majorityLabels.length !== 2) fail('a two-way tie should carry two labels');
+    else ok('every label in a tie is a string somebody actually typed');
+  },
+);
+
+await withAnswers(
+  [{ p: 'a', n: 'x', o: 'x' }, { p: 'b', n: 'y', o: 'y' }],
+  async () => {
+    const r = await analyzeRoundAnswers('round');
+    if ((r.majorityLabels || []).length !== 0) fail('a round nobody matched on claimed a herd to print');
+    else ok('nobody matching prints no herd at all');
+  },
+);
+
 console.log(failures ? `\n${failures} FAILURE(S)\n` : '\nAll checks passed.\n');
 process.exit(failures ? 1 : 0);

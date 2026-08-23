@@ -276,6 +276,268 @@ async function completedRoundResults(game, round) {
   return analyzeRoundAnswers(round._id);
 }
 
+/*
+  ───────────────────────────────────────────────────────────────────────────
+  NOBODY MAY STRAND A ROOM.
+
+  The incident, 21 Aug 2026, room S1DQVW. Three players filed three reports in
+  twenty-six seconds: "Someone d / Isn't answer", "Host is bad", "No work".
+  They were all looking at the words "Waiting for other players…" and nothing
+  else — no name, no clock, no button, on a screen that would never change
+  again.
+
+  It was not one bug, it was a missing rule. The "has everyone answered?" test
+  lived inside submit_answer and ONLY inside submit_answer, so the only event
+  that could ever end a round was another answer arriving. When the one person
+  everybody was waiting for closed their tab, that event was never coming:
+  disconnect just set isConnected:false, remove_player did the same, and neither
+  asked the question again. The host had no button because there was no handler
+  behind one.
+
+  Half of every report the site received in the following week came from this
+  game. So the rule, stated generally enough to cover the next handler somebody
+  adds:
+
+    EVERY event that can change who we are waiting for must re-ask whether the
+    wait is over, and every wait must have a way out that does not depend on
+    the person we are waiting for.
+
+  That is three pieces below — roundProgress (who are we waiting for),
+  completeRound (end it, exactly once, whoever asks) and maybeCompleteRound
+  (the question, asked from submit_answer, disconnect, remove_player and
+  reveal_now alike). BUILDING_A_GAME.md §4b says the same thing for the engine
+  games; this one predates the engine and never inherited it.
+  ───────────────────────────────────────────────────────────────────────────
+*/
+
+// The answer window, and the results window. Neither ends anything by itself —
+// each is the point at which a host-only escape hatch becomes everyone's.
+const ANSWER_SECONDS = 90;
+const RESULTS_UNLOCK_SECONDS = 60;
+// Client clocks disagree with ours by a second or two. A player whose phone
+// runs fast must not be told "not yet" by a server that agrees the time is up.
+const CLOCK_GRACE_MS = 3000;
+
+const EMPTY_RESULTS = {
+  majorityAnswer: null,
+  majorityAnswers: [],
+  majorityLabels: [],
+  uniqueAnswerPlayer: null,
+  scoringPlayers: [],
+  allAnswers: [],
+};
+
+/*
+  May this socket do a host-only thing?
+
+  Host-only is the right default — one person decides when to start, reveal and
+  move on, or a party game becomes a fight over the remote. It is the wrong
+  answer when that person has gone, and "gone" is the common case: people close
+  tabs. Every host-only handler was previously a way for one absent person to
+  end everyone else's game.
+
+  So: the host, always. Anyone else in the room, once the host is not connected.
+*/
+async function mayActAsHost(game, socketId) {
+  if (await isHostSocket(game, socketId)) return true;
+
+  const host = await Player.findOne({ gameId: game._id, isHost: true });
+  if (host && host.isConnected) return false;
+
+  /*
+    Either the host has gone or there is no host record at all (an old room, a
+    removed player). Both mean nobody is coming to press the button, so the room
+    may act for itself — but it must be THE ROOM. `!host` used to return true
+    unconditionally, which handed those actions to any socket that knew a game
+    id rather than to the people playing.
+  */
+  return isInRoom(game, socketId);
+}
+
+/** Is this socket actually a player in this game? */
+async function isInRoom(game, socketId) {
+  return !!(await Player.findOne({ gameId: game._id, socketId }));
+}
+
+/*
+  Who have we not heard from?
+
+  Derived from the Answer documents themselves, never from Game.playersAnswered.
+  That counter was `$inc`-ed before the insert that could fail, so a player who
+  refreshed mid-round and answered again bumped it without adding an answer —
+  and the round then resolved one answer EARLY for everyone else. Counting the
+  rows that exist cannot drift.
+
+  `waiting` is only ever connected players. Someone who left is not someone we
+  are waiting for, which is the whole fix.
+*/
+async function roundProgress(game, round) {
+  const players = await Player.find({ gameId: game._id });
+  const rows = round ? await Answer.find({ roundId: round._id }).select('playerId') : [];
+  const answered = new Set(rows.map((a) => String(a.playerId)));
+  const connected = players.filter((p) => p.isConnected);
+
+  return {
+    answeredIds: [...answered],
+    waitingFor: connected
+      .filter((p) => !answered.has(String(p._id)))
+      .map((p) => ({ id: String(p._id), username: p.username })),
+    // Counted among the connected so the progress bar can never read "3 of 2".
+    playersAnswered: connected.filter((p) => answered.has(String(p._id))).length,
+    totalPlayers: connected.length,
+    // Answers on the round including any from people who have since left. Their
+    // answer still counts for scoring — they gave it.
+    answerCount: answered.size,
+  };
+}
+
+async function broadcastProgress(game, round) {
+  const p = await roundProgress(game, round);
+  io.to(game.roomCode).emit('player_answered', {
+    playersAnswered: p.playersAnswered,
+    totalPlayers: p.totalPlayers,
+    answeredIds: p.answeredIds,
+    waitingFor: p.waitingFor,
+    roundEndsAt: game.roundEndsAt ? new Date(game.roundEndsAt).getTime() : null,
+    // Every deadline ships with the clock that produced it. A phone whose clock
+    // is ten minutes out would otherwise either never see the escape hatch —
+    // the exact dead screen this work exists to remove — or see it immediately
+    // and be refused by a server that disagrees. See toLocalDeadline() on the
+    // client: only the DIFFERENCE between these two travels.
+    serverNow: Date.now(),
+  });
+  return p;
+}
+
+/*
+  Score the round and publish it — exactly once, whoever asks.
+
+  The claim is a conditional update rather than a read-then-write because two
+  callers genuinely do arrive together: the last answer landing at the same
+  moment as a disconnect, or two people pressing Reveal. Whoever flips the
+  status does the work and everybody else gets null and returns, so no round is
+  ever scored twice and nobody is awarded two points for one answer.
+*/
+async function completeRound(game, round) {
+  const claimed = await Round.findOneAndUpdate(
+    { _id: round._id, status: 'collecting-answers' },
+    { $set: { status: 'completed' } },
+    { new: true }
+  );
+  if (!claimed) return false;
+
+  // null when the round has no answers at all — a forced reveal on an empty
+  // round. The screen says "nobody answered" rather than inventing a herd.
+  const results = (await analyzeRoundAnswers(round._id)) || EMPTY_RESULTS;
+
+  const newPinkCowHolder = determinePinkCowHolder(game.pinkCowHolder, results.uniqueAnswerPlayer);
+
+  if (results.scoringPlayers.length > 0) {
+    await Player.updateMany({ _id: { $in: results.scoringPlayers } }, { $inc: { score: 1 } });
+  }
+
+  await Game.findByIdAndUpdate(game._id, {
+    pinkCowHolder: newPinkCowHolder,
+    playersAnswered: 0,
+    resultsAt: new Date(),
+    // Clear it, or it stays in the past and every later `windowPassed` test
+    // reads true — which is how a stale answer window came to authorise a skip
+    // of a round that had already been scored.
+    roundEndsAt: null,
+  });
+
+  const updatedPlayers = await Player.find({ gameId: game._id });
+
+  io.to(game.roomCode).emit('round_completed', {
+    results,
+    pinkCowHolder: newPinkCowHolder,
+    players: updatedPlayers,
+    resultsAt: Date.now(),
+    serverNow: Date.now(),
+    unlockAfterMs: RESULTS_UNLOCK_SECONDS * 1000,
+  });
+
+  // 8 points and not holding the cow — see findWinner in gameLogic.js.
+  const winner = findWinner(updatedPlayers, newPinkCowHolder);
+  if (winner) {
+    await Game.findByIdAndUpdate(game._id, { status: 'completed' });
+    io.to(game.roomCode).emit('game_completed', { winner });
+  }
+  return true;
+}
+
+/*
+  The question, asked from everywhere something could have changed the answer.
+
+  Call this after ANY event that alters who is connected or who has answered.
+  `force` is the escape hatch — a deliberate reveal while people are still
+  missing — and is authorised by the caller, not here.
+*/
+async function maybeCompleteRound(gameId, { force = false } = {}) {
+  const game = await Game.findById(gameId);
+  if (!game || game.status !== 'in-progress') return false;
+
+  const round = await Round.findOne({ gameId: game._id, roundNumber: game.currentRound });
+  if (!round || round.status === 'completed') return false;
+
+  const p = await roundProgress(game, round);
+
+  if (!force) {
+    if (p.waitingFor.length > 0) return false;
+    /*
+      Everyone is "done" because everyone has left. Scoring that round would
+      hand points out for a question nobody was looking at, and the players
+      reconnecting a moment later would land on results for a round they never
+      saw. An empty room simply waits.
+    */
+    if (p.totalPlayers === 0 || p.answerCount === 0) return false;
+  }
+
+  return completeRound(game, round);
+}
+
+/*
+  Deal the next question.
+
+  One definition, used by next_round and by skip_question, because the two used
+  to differ only in ways nobody intended. A skip reuses the round NUMBER — the
+  group asked for a different question, not for the round counter to jump — so
+  it resets the existing round in place and bins its answers, which would
+  otherwise still be attached to that round id and get scored into the replay.
+*/
+async function startNextRound(game, { skipped = false } = {}) {
+  const question = getRandomQuestion(game.usedQuestions, game.customQuestions);
+
+  if (skipped) {
+    const round = await Round.findOne({ gameId: game._id, roundNumber: game.currentRound });
+    if (round) {
+      await Answer.deleteMany({ roundId: round._id });
+      await Round.updateOne({ _id: round._id }, { $set: { status: 'collecting-answers' } });
+    }
+  } else {
+    await new Round({ gameId: game._id, roundNumber: game.currentRound + 1 }).save();
+    game.currentRound += 1;
+  }
+
+  game.currentQuestion = question;
+  game.usedQuestions.push(question);
+  game.playersAnswered = 0;
+  game.roundEndsAt = new Date(Date.now() + ANSWER_SECONDS * 1000);
+  game.resultsAt = null;
+  await game.save();
+
+  io.to(game.roomCode).emit('next_round', {
+    roundNumber: game.currentRound,
+    question: game.currentQuestion,
+    roundEndsAt: game.roundEndsAt.getTime(),
+    serverNow: Date.now(),
+    skipped,
+  });
+
+  const round = await Round.findOne({ gameId: game._id, roundNumber: game.currentRound });
+  await broadcastProgress(game, round);
+}
+
 // Socket.IO connection handling
 io.on('connection', (socket) => {
   console.log('New client connected');
@@ -434,6 +696,39 @@ io.on('connection', (socket) => {
         playersAnswered: game.playersAnswered
       };
 
+      /*
+        Whether THIS player has already answered this round, and who the room is
+        still waiting for.
+
+        The client used to keep `hasAnswered` in a useState that reset on every
+        remount, so anyone who refreshed mid-round was handed the answer box
+        back for a question they had already answered. Submitting again hit the
+        unique index and told them "Failed to submit answer". The server is the
+        only thing that knows, so the server says.
+      */
+      const jp = await roundProgress(game, currentRound);
+      gameState.hasAnswered = jp.answeredIds.includes(String(player._id));
+      gameState.waitingFor = jp.waitingFor;
+      gameState.playersAnswered = jp.playersAnswered;
+      gameState.totalPlayers = jp.totalPlayers;
+      gameState.roundEndsAt = game.roundEndsAt ? new Date(game.roundEndsAt).getTime() : null;
+      gameState.resultsAt = game.resultsAt ? new Date(game.resultsAt).getTime() : null;
+      gameState.unlockAfterMs = RESULTS_UNLOCK_SECONDS * 1000;
+      gameState.serverNow = Date.now();
+
+      /*
+        Send the player list WITH the join, not only in the broadcast after it.
+
+        `players_updated` goes out to the room a few lines below, but the socket
+        that has just joined is still on the home page mid-navigate — the room
+        screen has not mounted its listener yet, so the joiner can miss its own
+        arrival broadcast entirely and sit with an empty player list until the
+        next thing happens in the room. Everything downstream reads that list:
+        the scoreboard, who the host is, and therefore whether the host is
+        considered gone.
+      */
+      gameState.players = await Player.find({ gameId: game._id });
+
       // If the round is complete, include its results so the arriving player
       // lands on the results screen rather than an answer box for a round that
       // has already been scored.
@@ -446,6 +741,16 @@ io.on('connection', (socket) => {
       // reason the socket joins on it.
       const players = await Player.find({ gameId: game._id });
       io.to(game.roomCode).emit('players_updated', { players });
+
+      /*
+        A new arrival changes who we are waiting for, in both directions: they
+        are one more person to wait for mid-round, and if the round was only
+        being held open by somebody who has since gone, this is the moment that
+        becomes visible to everyone else.
+      */
+      if (currentRound && currentRound.status !== 'completed') {
+        await broadcastProgress(game, currentRound);
+      }
     } catch (error) {
       console.error('Join game error:', error);
       socket.emit('error', { message: 'Failed to join game' });
@@ -461,9 +766,31 @@ io.on('connection', (socket) => {
         return;
       }
 
-      // Verify sender is host
-      if (!(await isHostSocket(game, socket.id))) {
-        socket.emit('error', { message: 'Only host can start the game' });
+      /*
+        Starting a game that has already started BRICKS THE ROOM.
+
+        This handler resets status, currentRound, usedQuestions and roundEndsAt
+        and saves the game BEFORE inserting round 1 — and on a game already in
+        progress that insert hits the unique (gameId, roundNumber) index and
+        throws. The catch emits "Failed to start game", by which point the game
+        document has already been rewound: the server believes it is on round 1,
+        round 1 is `completed`, so every answer comes back `round-over` and every
+        next_round dies on the same duplicate key. Forever.
+
+        It was unreachable while only a lobby host could call this. It is not
+        any more: mayActAsHost widened who may press it, and a player joining
+        mid-game was landing on the lobby screen with a live Start button.
+      */
+      if (game.status !== 'waiting') {
+        socket.emit('error', { message: 'That game has already started.' });
+        return;
+      }
+
+      // The host's call — unless the host is the one who left the lobby, in
+      // which case anyone still sitting in it may start rather than everybody
+      // waiting for somebody who is not coming back.
+      if (!(await mayActAsHost(game, socket.id))) {
+        socket.emit('error', { message: 'Only the host can start the game' });
         return;
       }
 
@@ -473,6 +800,9 @@ io.on('connection', (socket) => {
       const firstQuestion = getRandomQuestion([], game.customQuestions);
       game.currentQuestion = firstQuestion;
       game.usedQuestions = [firstQuestion];
+      game.playersAnswered = 0;
+      game.roundEndsAt = new Date(Date.now() + ANSWER_SECONDS * 1000);
+      game.resultsAt = null;
       await game.save();
 
       const round = new Round({
@@ -485,26 +815,45 @@ io.on('connection', (socket) => {
       io.to(game.roomCode).emit('game_started', {
         gameState: game,
         players,
-        round
+        round,
+        roundEndsAt: game.roundEndsAt.getTime(),
+        serverNow: Date.now()
       });
+
+      // Say who we are waiting for from the very first second of the game, not
+      // from the first answer. A round that has not been told is a round whose
+      // escape hatches are hidden.
+      await broadcastProgress(game, round);
     } catch (error) {
       socket.emit('error', { message: 'Failed to start game' });
     }
   });
 
-  // Submit answer
+  /*
+    Submit answer.
+
+    Two things changed here. The reveal check that used to live at the bottom of
+    this handler now lives in maybeCompleteRound, because being reachable only
+    from here is exactly what let one silent player freeze a room forever.
+
+    And the `$inc: { playersAnswered: 1 }` this used to open with is gone. It
+    ran BEFORE the insert that could fail, and the insert can fail: Answer has a
+    unique index on (roundId, playerId), and a player who refreshed mid-round
+    got the answer box back — the client had no way to know it had already
+    answered — so a second submit bumped the counter, hit the index, threw, and
+    told them "Failed to submit answer" while the round quietly needed one
+    fewer answer than there were players. The next person to answer resolved it
+    early for everybody. Counts are now derived from the answers that exist.
+  */
   socket.on('submit_answer', async ({ gameId, answer }) => {
     try {
-      // Use findOneAndUpdate to atomically check game state
-      const game = await Game.findOneAndUpdate(
-        { 
-          _id: gameId, 
-          status: 'in-progress'
-        },
-        { $inc: { playersAnswered: 1 } },
-        { new: true }
-      );
+      const text = String(answer || '').trim();
+      if (!text) {
+        socket.emit('error', { message: 'Type an answer first.' });
+        return;
+      }
 
+      const game = await Game.findOne({ _id: gameId, status: 'in-progress' });
       if (!game) {
         socket.emit('error', { message: 'Invalid game state' });
         return;
@@ -516,110 +865,137 @@ io.on('connection', (socket) => {
         return;
       }
 
-      const round = await Round.findOne({ 
-        gameId, 
-        roundNumber: game.currentRound 
-      });
-
-      // Save answer
-      const newAnswer = new Answer({
-        gameId,
-        roundId: round._id,
-        playerId: player._id,
-        username: player.username,
-        originalAnswer: answer,
-        normalizedAnswer: normalizeAnswer(answer)
-      });
-      await newAnswer.save();
-
-      // Get total number of connected players
-      const connectedPlayers = await Player.countDocuments({ 
-        gameId, 
-        isConnected: true 
-      });
-
-      // Notify all players about the new answer count
-      io.to(game.roomCode).emit('player_answered', {
-        playersAnswered: game.playersAnswered,
-        totalPlayers: connectedPlayers
-      });
-
-      // Check if all players have answered
-      if (game.playersAnswered >= connectedPlayers) {
-        try {
-          // Analyze round results
-          const results = await analyzeRoundAnswers(round._id);
-          
-          // Determine new pink cow holder
-          const newPinkCowHolder = determinePinkCowHolder(
-            game.pinkCowHolder,
-            results.uniqueAnswerPlayer
-          );
-
-          // Update scores for players with majority answer
-          if (results.scoringPlayers.length > 0) {
-            await Player.updateMany(
-              { _id: { $in: results.scoringPlayers } },
-              { $inc: { score: 1 } }
-            );
-          }
-
-          /*
-            Write down that the round is over.
-
-            Round.status has existed since the first version, with an enum of
-            'collecting-answers' | 'completed', and nothing ever set it to
-            'completed'. So the restore path in join_game —
-
-                if (currentRound && currentRound.status === 'completed')
-
-            — could not fire, ever. Anyone who refreshed while looking at the
-            results came back to the answer box for a round that had already
-            been scored, under the words "2 of 2 players answered", with no
-            results and no Next Round button. For the host that made the room
-            unfinishable, and "How to go to next round" is exactly what that
-            screen looks like from the player's chair.
-          */
-          round.status = 'completed';
-          await round.save();
-
-          // Update game state atomically
-          await Game.findByIdAndUpdate(gameId, {
-            pinkCowHolder: newPinkCowHolder,
-            playersAnswered: 0
-          });
-
-          // Get updated player states
-          const updatedPlayers = await Player.find({ gameId });
-
-          // Send round results to all players
-          io.to(game.roomCode).emit('round_completed', {
-            results,
-            pinkCowHolder: newPinkCowHolder,
-            players: updatedPlayers
-          });
-
-          // 8 points and not holding the cow — see findWinner in gameLogic.js.
-          // The comment that used to sit here described a second rule ("OR if
-          // multiple players have 8 points, even if one has the pink cow") that
-          // the code did not implement and never had.
-          const winner = findWinner(updatedPlayers, newPinkCowHolder);
-          if (winner) {
-            await Game.findByIdAndUpdate(gameId, { status: 'completed' });
-            io.to(game.roomCode).emit('game_completed', { winner });
-          }
-        } catch (error) {
-          console.error('Round completion error:', error);
-          socket.emit('error', { message: 'Error completing round' });
-        }
+      const round = await Round.findOne({ gameId, roundNumber: game.currentRound });
+      if (!round || round.status === 'completed') {
+        // Not an error the player did anything to cause — the round resolved
+        // while they were typing. Say so in words that are not "Failed".
+        socket.emit('answer_rejected', { reason: 'round-over' });
+        return;
       }
+
+      try {
+        await new Answer({
+          gameId,
+          roundId: round._id,
+          playerId: player._id,
+          username: player.username,
+          originalAnswer: text,
+          normalizedAnswer: normalizeAnswer(text)
+        }).save();
+      } catch (err) {
+        if (err && err.code === 11000) {
+          socket.emit('answer_rejected', { reason: 'already-answered' });
+          return;
+        }
+        throw err;
+      }
+
+      // Keep the legacy counter honest for completedRoundResults' fallback,
+      // by writing what is true rather than by adding one and hoping.
+      const p = await roundProgress(game, round);
+      await Game.updateOne({ _id: game._id }, { $set: { playersAnswered: p.playersAnswered } });
+
+      await broadcastProgress(game, round);
+      await maybeCompleteRound(gameId);
     } catch (error) {
       console.error('Submit answer error:', error);
       socket.emit('error', { message: 'Failed to submit answer' });
     }
   });
 
-  // Start next round (host only)
+  /*
+    Reveal the answers without waiting for everybody.
+
+    The button that room S1DQVW did not have. The host may always press it once
+    at least one answer is in; anybody may press it once the answer window has
+    passed, because the person who has wandered off is quite often the host.
+
+    Refused on an empty round: revealing nothing scores nothing and reads as the
+    game breaking. The screen offers "skip this question" for that instead.
+  */
+  socket.on('reveal_now', async ({ gameId }) => {
+    try {
+      const game = await Game.findById(gameId);
+      if (!game || game.status !== 'in-progress') return;
+
+      const round = await Round.findOne({ gameId: game._id, roundNumber: game.currentRound });
+      if (!round || round.status === 'completed') return;
+
+      const answers = await Answer.countDocuments({ roundId: round._id });
+      if (!answers) {
+        socket.emit('error', { message: 'Nobody has answered yet — there is nothing to reveal.' });
+        return;
+      }
+
+      const endsAt = game.roundEndsAt ? new Date(game.roundEndsAt).getTime() : 0;
+      const windowPassed = endsAt > 0 && Date.now() >= endsAt - CLOCK_GRACE_MS;
+
+      // "Anyone" means anyone IN THE ROOM. The window passing is not a reason to
+      // stop checking who is asking.
+      const allowed = (await mayActAsHost(game, socket.id))
+        || (windowPassed && await isInRoom(game, socket.id));
+      if (!allowed) {
+        socket.emit('error', { message: 'Only the host can reveal early.' });
+        return;
+      }
+
+      await maybeCompleteRound(gameId, { force: true });
+    } catch (error) {
+      console.error('reveal_now error:', error);
+      socket.emit('error', { message: 'Failed to reveal answers' });
+    }
+  });
+
+  /*
+    Throw this question away and deal another.
+
+    The other half of the escape hatch. reveal_now needs an answer to reveal, so
+    a round where the question itself is the problem — nobody understands it,
+    nobody wants to answer it — had no exit at all.
+  */
+  socket.on('skip_question', async ({ gameId }) => {
+    try {
+      const game = await Game.findById(gameId);
+      if (!game || game.status !== 'in-progress') return;
+
+      /*
+        Refuse a round that has already been scored.
+
+        skip_question deletes the round's answers and flips it back to
+        collecting-answers. Doing that to a COMPLETED round replays a round
+        whose points are already on the scoreboard, so answering it again pays
+        twice — and it yanks everyone off the results screen they were reading.
+        reveal_now had this guard from the start; this did not.
+      */
+      const round = await Round.findOne({ gameId: game._id, roundNumber: game.currentRound });
+      if (!round || round.status === 'completed') return;
+
+      const endsAt = game.roundEndsAt ? new Date(game.roundEndsAt).getTime() : 0;
+      const windowPassed = endsAt > 0 && Date.now() >= endsAt - CLOCK_GRACE_MS;
+      const allowed = (await mayActAsHost(game, socket.id))
+        || (windowPassed && await isInRoom(game, socket.id));
+      if (!allowed) {
+        socket.emit('error', { message: 'Only the host can skip a question.' });
+        return;
+      }
+
+      await startNextRound(game, { skipped: true });
+    } catch (error) {
+      console.error('skip_question error:', error);
+      socket.emit('error', { message: 'Failed to skip the question' });
+    }
+  });
+
+  /*
+    Start the next round.
+
+    Host's call, until it isn't. The results screen is the other place a room
+    could be stranded — a host who closed their tab after the reveal left
+    everyone reading the same scores forever, and "How to go to next round" was
+    a fair question with no answer anywhere on the screen. So: the host always,
+    anyone once the host is gone, and anyone at all after RESULTS_UNLOCK_SECONDS,
+    which also covers the host who is merely making tea.
+  */
   socket.on('next_round', async ({ gameId }) => {
     try {
       const game = await Game.findById(gameId);
@@ -628,29 +1004,29 @@ io.on('connection', (socket) => {
         return;
       }
 
-      // Verify sender is host
-      if (!(await isHostSocket(game, socket.id))) {
-        socket.emit('error', { message: 'Only host can start next round' });
+      const shownAt = game.resultsAt ? new Date(game.resultsAt).getTime() : 0;
+      const unlocked = shownAt > 0
+        && Date.now() >= shownAt + RESULTS_UNLOCK_SECONDS * 1000 - CLOCK_GRACE_MS;
+
+      const allowed = (await mayActAsHost(game, socket.id))
+        || (unlocked && await isInRoom(game, socket.id));
+      if (!allowed) {
+        socket.emit('error', { message: 'Only the host can start the next round yet.' });
         return;
       }
 
-      const nextRound = new Round({
-        gameId,
-        roundNumber: game.currentRound + 1
-      });
-      await nextRound.save();
-
-      const nextQuestion = getRandomQuestion(game.usedQuestions, game.customQuestions);
-      game.currentRound += 1;
-      game.currentQuestion = nextQuestion;
-      game.usedQuestions.push(nextQuestion);
-      await game.save();
-
-      io.to(game.roomCode).emit('next_round', {
-        roundNumber: game.currentRound,
-        question: game.currentQuestion
-      });
+      await startNextRound(game);
     } catch (error) {
+      /*
+        Two people pressing "Next question" at the same moment both read
+        currentRound = N and both try to insert round N+1. The unique index
+        keeps that correct — the loser throws before mutating anything — but the
+        loser is a player whose action DID happen, and telling them "Failed to
+        start next round" in red is a lie about a working button. Now that the
+        button is everyone's after a minute, this is a normal Tuesday.
+      */
+      if (error && error.code === 11000) return;
+      console.error('next_round error:', error);
       socket.emit('error', { message: 'Failed to start next round' });
     }
   });
@@ -662,8 +1038,10 @@ io.on('connection', (socket) => {
 
       const game = await Game.findById(gameId);
       if (!game || game.status !== 'in-progress') return;
-      if (!(await isHostSocket(game, socket.id))) {
-        socket.emit('error', { message: 'Only host can adjust scores' });
+      // mayActAsHost, not isHostSocket: a room whose host has gone can still
+      // need a typo forgiven, and refusing everybody just ends the game.
+      if (!(await mayActAsHost(game, socket.id))) {
+        socket.emit('error', { message: 'Only the host can adjust scores' });
         return;
       }
 
@@ -716,7 +1094,9 @@ io.on('connection', (socket) => {
     try {
       const game = await Game.findById(gameId);
       if (!game || game.status !== 'in-progress') return;
-      if (!(await isHostSocket(game, socket.id))) {
+      // The cow is what makes a game unwinnable (8 points while holding it), so
+      // a vanished host must not be able to take the ending away with them.
+      if (!(await mayActAsHost(game, socket.id))) {
         socket.emit('error', { message: 'Only the host can move the pink cow' });
         return;
       }
@@ -751,7 +1131,7 @@ io.on('connection', (socket) => {
   socket.on('remove_player', async ({ gameId, playerId }) => {
     try {
       const game = await Game.findById(gameId);
-      if (!game || !(await isHostSocket(game, socket.id))) {
+      if (!game || !(await mayActAsHost(game, socket.id))) {
         socket.emit('error', { message: 'Unauthorized' });
         return;
       }
@@ -763,6 +1143,16 @@ io.on('connection', (socket) => {
 
       const players = await Player.find({ gameId });
       io.to(game.roomCode).emit('players_updated', { players });
+
+      /*
+        Removing the person everyone is waiting for has to actually end the
+        wait. This used to stop at the line above: the player vanished from the
+        list, the round still needed their answer, and the host had done the one
+        thing available to them and watched nothing happen.
+      */
+      const round = await Round.findOne({ gameId: game._id, roundNumber: game.currentRound });
+      if (round && round.status !== 'completed') await broadcastProgress(game, round);
+      await maybeCompleteRound(game._id);
     } catch (error) {
       socket.emit('error', { message: 'Failed to remove player' });
     }
@@ -830,7 +1220,10 @@ io.on('connection', (socket) => {
         roundNumber: game.currentRound
       });
 
-      const playersAnswered = currentRound ? await Answer.countDocuments({ roundId: currentRound._id }) : 0;
+      const rp = await roundProgress(game, currentRound);
+      const myAnswerDoc = currentRound
+        ? await Answer.findOne({ roundId: currentRound._id, playerId: player._id })
+        : null;
 
       // The same restore join_game does. Without it a refresh on the results
       // screen came back to the answer box for a finished round — for the host,
@@ -850,7 +1243,20 @@ io.on('connection', (socket) => {
           gameStatus: game.status,
           players,
           pinkCowHolder: game.pinkCowHolder,
-          playersAnswered,
+          playersAnswered: rp.playersAnswered,
+          totalPlayers: rp.totalPlayers,
+          // A refresh must not hand back the answer box for a question this
+          // player has already answered — see join_game for what that cost.
+          hasAnswered: rp.answeredIds.includes(String(player._id)),
+          // ...and it should show them WHAT they answered. Otherwise coming
+          // back mid-round means staring at "your answer is in" with no memory
+          // of what went in.
+          myAnswer: myAnswerDoc ? myAnswerDoc.originalAnswer : '',
+          waitingFor: rp.waitingFor,
+          roundEndsAt: game.roundEndsAt ? new Date(game.roundEndsAt).getTime() : null,
+          resultsAt: game.resultsAt ? new Date(game.resultsAt).getTime() : null,
+          unlockAfterMs: RESULTS_UNLOCK_SECONDS * 1000,
+          serverNow: Date.now(),
           roundResults
         }
       });
@@ -858,9 +1264,53 @@ io.on('connection', (socket) => {
       // Notify others
       io.to(game.roomCode).emit('players_updated', { players });
 
+      // Coming back changes who the room is waiting for. Everyone else's screen
+      // still names this player as missing until we say otherwise.
+      if (currentRound && currentRound.status !== 'completed') {
+        await broadcastProgress(game, currentRound);
+      }
+
     } catch (error) {
       console.error('Reconnection error:', error);
       socket.emit('reconnect_failed', { reason: 'Server error during reconnection' });
+    }
+  });
+
+  /*
+    Leaving on purpose.
+
+    THERE WAS NO HANDLER FOR THIS. The client had emitted `leave_game` since the
+    first version and the server has never listened, which mattered little while
+    the only Leave button was on the game-over screen. It matters now: this
+    change puts "Leave room" / "Leave game" on the lobby, the answering screen
+    and the results screen, and the socket provider is app-level — it does not
+    close on a route change. So a player who left stayed `isConnected: true`
+    forever, the room went on naming them as the person it was waiting for, and
+    maybeCompleteRound could never fire for them. Every remaining round would
+    have cost the full answer window.
+
+    Which is this change's own invariant — every event that changes who we are
+    waiting for must re-ask whether the wait is over — with one event missing.
+  */
+  socket.on('leave_game', async ({ gameId }) => {
+    try {
+      const player = await Player.findOne({ gameId, socketId: socket.id });
+      if (!player) return;
+
+      player.isConnected = false;
+      await player.save();
+
+      const game = await Game.findById(gameId);
+      if (!game) return;
+
+      const players = await Player.find({ gameId: game._id });
+      io.to(game.roomCode).emit('players_updated', { players });
+
+      const round = await Round.findOne({ gameId: game._id, roundNumber: game.currentRound });
+      if (round && round.status !== 'completed') await broadcastProgress(game, round);
+      await maybeCompleteRound(game._id);
+    } catch (error) {
+      console.error('leave_game error:', error);
     }
   });
 
@@ -876,6 +1326,18 @@ io.on('connection', (socket) => {
         if (game) {
           const players = await Player.find({ gameId: game._id });
           io.to(game.roomCode).emit('players_updated', { players });
+
+          /*
+            THE FIX FOR ROOM S1DQVW.
+
+            Closing a tab is how people leave a party game — not a Leave button,
+            a tab. Before this line, that event updated a list and asked nothing
+            else, so the one player everybody was waiting for could remove
+            themselves from the room and leave the wait in place forever.
+          */
+          const round = await Round.findOne({ gameId: game._id, roundNumber: game.currentRound });
+          if (round && round.status !== 'completed') await broadcastProgress(game, round);
+          await maybeCompleteRound(game._id);
         }
       }
     } catch (error) {

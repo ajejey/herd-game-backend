@@ -63,6 +63,40 @@ export async function analyzeRoundAnswers(roundId) {
         .map(a => a.playerId)
     : [];
 
+  /*
+    THE WORD TO PRINT, as somebody actually typed it.
+
+    `majorityAnswers` holds NORMALISED keys — spacing collapsed, articles
+    dropped, plurals stemmed — because that is what decides who matched whom.
+    They were also what the results screen printed, so a room where everyone
+    said "cheese sandwich" was told, in the largest text on the page,
+
+        The herd said  cheesesandwich
+
+    and a room that agreed on "running" was told the herd said "run". The
+    machine's spelling of a word is not a word, and the one screen where players
+    check whether the game understood them is the worst place to show it.
+
+    So each herd also carries a label: the most common original spelling among
+    the people in it, which is by definition something a human in this room
+    typed. Ties fall to whoever said it first, which is as good a rule as any
+    when two spellings are equally popular.
+  */
+  const labelFor = (norm) => {
+    const originals = answers
+      .filter((a) => a.normalizedAnswer === norm)
+      .map((a) => String(a.originalAnswer || '').trim())
+      .filter(Boolean);
+    const tally = new Map();
+    for (const o of originals) tally.set(o, (tally.get(o) || 0) + 1);
+    let best = originals[0] || norm;
+    let bestCount = 0;
+    for (const [word, count] of tally) {
+      if (count > bestCount) { best = word; bestCount = count; }
+    }
+    return best;
+  };
+
   return {
     // Kept for older clients: a single herd, or null. The Android app ships a
     // frozen bundle, so it will keep reading this one for a while — which is
@@ -77,6 +111,9 @@ export async function analyzeRoundAnswers(roundId) {
     // Every herd that scored this round, so a client can show "two herds tied,
     // both score" instead of silently calling it nothing.
     majorityAnswers: agreed ? majorityAnswers : [],
+    // The same herds, spelled the way the room spelled them. Clients should
+    // print these and match on the ones above.
+    majorityLabels: agreed ? majorityAnswers.map(labelFor) : [],
     uniqueAnswerPlayer: uniquePlayers,
     scoringPlayers,
     allAnswers: answers.map(a => ({
