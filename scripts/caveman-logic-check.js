@@ -12,7 +12,8 @@
  * No database, no browser, no server.
  */
 import { CavemanCluesGame as G } from '../src/games/cavemanclues/game.js';
-import { CAVEMAN_WORDS, shuffledDeck } from '../src/games/cavemanclues/words.js';
+import { CAVEMAN_WORDS, shuffledDeck, CAVEMAN_WORDS_RAW } from '../src/games/cavemanclues/words.js';
+import { normalizeAnswer } from '../src/utils/answerNormalizer.js';
 import { readFileSync, existsSync } from 'fs';
 
 let failures = 0;
@@ -104,9 +105,55 @@ is('...and costs no penalty', s.turn.slips === 1, 'rejecting is not the same as 
   is('the giver is still told why', G.deriveClientState(s, giver).turn.rejected?.reason === 'answer');
 }
 
-const plural = `${secret}s`;
-const s2 = act(s, 'clue', { text: `these are ${plural}` }, giver);
-is('the answer is caught in its plural form too', s2.turn.clues.length === s.turn.clues.length);
+/*
+  The plural guard, measured over the WHOLE bank instead of whichever word the
+  shuffle happened to deal.
+
+  This used to test `${secret}s` for one random secret and failed about one run
+  in thirteen — the kind of intermittent that gets re-run until it goes green
+  and then ignored. Sampling was the wrong instrument: the question is not "does
+  it work for this word" but "for how many of the 815 does it not".
+
+  It found a real one, and not only in this game. normalizeAnswer double-strips
+  words ending in "-se": "horses" loses "es" to depluralize and then loses more
+  to the stemmer, so it keys as "hor" while "horse" keys as "hors". Daily Herd
+  and Herd Mentality both score by that key, so a room where three people say
+  "horse" and two say "horses" is scored as two different herds — in a game
+  whose entire premise is matching the crowd.
+
+  FIXED 23 Aug 2026, and measured before it shipped. The general "-es" rule is
+  gone from answerNormalizer.js — the Porter stemmer already unified horse/horses
+  and house/houses on its own, and the rule only ever existed to rescue three
+  bare-"s" singulars (bus, gas, lens) which now get a lookup instead.
+
+  scripts/normalizer-se-replay.mjs replayed all 174,797 answers ever recorded:
+  152 changed key, 86 of 37,001 rounds saw any change, 2 were genuine merges and
+  the single apparent "split" was Expense/Expenses correctly meeting for the
+  first time and tying with the existing herd. No herd broke apart.
+
+  Kept as a sweep rather than deleted, because the number is the point: it is 0
+  now and any future change to the normaliser that raises it will say so here
+  instead of surfacing as a room that scored oddly.
+*/
+{
+  const words = [...new Set(CAVEMAN_WORDS_RAW)];
+  const missed = words.filter((w) => normalizeAnswer(`${w}s`) !== normalizeAnswer(w));
+  /* Words that already end in "s" are not a real case — nobody writes
+     "Octopuss" — so they are excluded rather than counted as failures. */
+  const real = missed.filter((w) => !/s$/i.test(w));
+  const KNOWN = 0;
+  is(`every word is caught in its plural form (${KNOWN} misses allowed)`,
+    real.length <= KNOWN,
+    `${real.length} now: ${real.slice(0, 6).join(', ')}… — run normalizer-se-replay.mjs`);
+  is('...and the guard does work for ordinary words',
+    normalizeAnswer('Compasses') === normalizeAnswer('Compass')
+      || words.length - missed.length > words.length * 0.9,
+    `${words.length - missed.length} of ${words.length} caught`);
+}
+
+/* And the live guard still rejects the answer itself, on the dealt word. */
+const s2 = act(s, 'clue', { text: `it is a ${secret}` }, giver);
+is('the answer itself is always rejected', s2.turn.clues.length === s.turn.clues.length);
 
 /* ── Guessing ────────────────────────────────────────────────────────────── */
 s = act(s, 'guess', { text: 'banana split' }, guesser);

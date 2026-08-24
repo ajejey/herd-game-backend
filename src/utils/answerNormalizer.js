@@ -54,20 +54,46 @@ const IRREGULAR = new Map(Object.entries({
 }));
 
 /*
-  "-es" after a sibilant is a plural marker, not part of the word.
+  Singular nouns that already end in "s".
 
-  Without this, Porter turns "bus" into "bu" but "buses" into "buse" — the two
-  never meet, which is the same class of bug as the old `.replace(/s$/, '')` and
-  just as invisible. Stripping the "es" first puts both on "bus" before the
-  stemmer sees either.
+  THE BUG THIS REPLACES, and it was a big one. There used to be a general rule
+  here: any word ending in "-es" whose base ended in a sibilant had the "es"
+  stripped before stemming. It existed to fix exactly three shapes — Porter
+  turns "bus" into "bu" but "buses" into "buse", and the same for gas and lens.
+
+  It fixed those three and broke every word ending in "-se". "horses" lost its
+  "es" to that rule and then lost more to the stemmer, keying as "hor" while
+  "horse" keyed as "hors". Measured over the 815-word Caveman bank, 14 words
+  were affected; measured over English, it is every -se noun there is:
+
+      horse/horses   house/houses   nurse/nurses   promise/promises
+      suitcase/suitcases   bruise/bruises   eclipse/eclipses
+
+  Daily Herd and Herd Mentality both bucket answers by this key, so a room where
+  three people said "horse" and two said "horses" scored as two separate herds —
+  in a game whose entire premise is matching the crowd. It is the same class of
+  failure the plural handling was rewritten to remove, reintroduced by the fix.
+
+  The measurement that settled it: the Porter stemmer ALONE already unifies
+  horse/horses, house/houses, box/boxes, dish/dishes, glass/glasses and
+  church/churches correctly. The only pairs it splits are singulars that end in
+  a bare "s" — bus, gas, lens — because it reads that "s" as a plural marker.
+
+  So the general rule is gone and those get a lookup instead, which is what the
+  irregular map above already argues for: a short list earns its place where a
+  clever algorithm cannot. Plural on the left, singular on the right; both then
+  go through the stemmer together and land on the same key.
 */
-function depluralize(w) {
-  if (w.length > 3 && w.endsWith('es')) {
-    const base = w.slice(0, -2);
-    if (/(s|x|z|sh|ch)$/.test(base)) return base;
-  }
-  return w;
-}
+const SINGULAR_S = new Map(Object.entries({
+  buses: 'bus', busses: 'bus', gases: 'gas', gasses: 'gas', lenses: 'lens',
+  viruses: 'virus', campuses: 'campus', circuses: 'circus', cactuses: 'cactus',
+  atlases: 'atlas', biases: 'bias', canvases: 'canvas', choruses: 'chorus',
+  bonuses: 'bonus', censuses: 'census', irises: 'iris', sinuses: 'sinus',
+  statuses: 'status', focuses: 'focus', pluses: 'plus', minuses: 'minus',
+  octopuses: 'octopus', walruses: 'walrus', platypuses: 'platypus',
+  rhinoceroses: 'rhinoceros', hippopotamuses: 'hippopotamus',
+  crocuses: 'crocus', abacuses: 'abacus', compasses: 'compass',
+}));
 
 export function normalizeAnswer(answer) {
   if (!answer) return '';
@@ -85,7 +111,7 @@ export function normalizeAnswer(answer) {
     .map((w) => w.replace(/'/g, ''))
     .filter((w) => w && !ARTICLES.has(w))
     // Per word, before joining: "field mice" and "field mouse" have to meet.
-    .map((w) => IRREGULAR.get(w) || depluralize(w));
+    .map((w) => IRREGULAR.get(w) || SINGULAR_S.get(w) || w);
 
   // Every article stripped: keep the original rather than returning nothing,
   // because "the the" is a band and an empty key would silently merge it with
