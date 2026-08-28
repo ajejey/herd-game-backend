@@ -36,7 +36,7 @@ export function ensureRoomIndexes() {
 
 // Debounced, fire-and-forget snapshot. namespace lets the same room code coexist
 // across games (unlikely, but safe).
-export function snapshotRoom(namespace, roomCode, state, tokenEntries) {
+export function snapshotRoom(namespace, roomCode, state, tokenEntries, roomSettings) {
   try {
     const key = namespace + ':' + roomCode;
     if (timers.has(key)) clearTimeout(timers.get(key));
@@ -49,7 +49,7 @@ export function snapshotRoom(namespace, roomCode, state, tokenEntries) {
         const safeState = sanitize(state);
         conn.collection(COLLECTION).updateOne(
           { roomCode },
-          { $set: { roomCode, namespace, state: safeState, tokens: tokenEntries || [], updatedAt: new Date() } },
+          { $set: { roomCode, namespace, state: safeState, tokens: tokenEntries || [], settings: roomSettings || {}, updatedAt: new Date() } },
           { upsert: true }
         ).catch(() => {});
       } catch { /* swallow */ }
@@ -70,7 +70,7 @@ export async function loadRoom(roomCode) {
       game it belongs to writes another game's room into memory under the wrong
       game — the restart-path twin of the cross-game join bug.
     */
-    return { state: doc.state, tokens: doc.tokens || [], namespace: doc.namespace || null };
+    return { state: doc.state, tokens: doc.tokens || [], settings: doc.settings || null, namespace: doc.namespace || null };
   } catch {
     return null;
   }

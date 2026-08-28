@@ -1306,6 +1306,67 @@ io.on('connection', (socket) => {
     Which is this change's own invariant — every event that changes who we are
     waiting for must re-ask whether the wait is over — with one event missing.
   */
+  /*
+    ── Play again, without losing the room ────────────────────────────────────
+
+    The finished screen's "Play again" button called handleLeaveGame: it left
+    the room and dropped you on the hub to make a new one with a new code,
+    while everyone else stayed on the final scoreboard. Same complaint a
+    Scattergories player filed on 28 Aug 2026 — "Cannot force start a new
+    game." — and it was true of all fourteen games.
+
+    THE ROUNDS HAVE TO GO, and that is the whole risk in this handler.
+    `roundSchema.index({ gameId, roundNumber }, { unique: true })` means a room
+    reset to `waiting` still carries round 1 from the game just played. The
+    next start_game inserts round 1 again, hits the duplicate key, throws — and
+    by then the game document has already been rewound. That is exactly the
+    bricking bug documented on start_game above, reached from a new direction.
+    So the old rounds and their answers are deleted here, before anything is
+    reset, and the room only goes back to `waiting` if that delete succeeded.
+
+    They are safe to delete: the game they belong to is over and has already
+    emitted game_completed. Nothing on main reads them afterwards.
+  */
+  socket.on('play_again', async ({ gameId }) => {
+    try {
+      const game = await Game.findById(gameId);
+      if (!game) return socket.emit('error', { message: 'Game not found' });
+
+      /* Only from a finished game — mid-game this is a score-wiping griefing
+         tool, and mayActAsHost deliberately lets non-hosts act. */
+      if (game.status !== 'completed') {
+        return socket.emit('error', { message: 'That game is still going.' });
+      }
+      if (!(await mayActAsHost(game, socket.id))) {
+        return socket.emit('error', { message: 'Only the host can start another game' });
+      }
+
+      const rounds = await Round.find({ gameId: game._id }).select('_id');
+      if (rounds.length) {
+        await Answer.deleteMany({ roundId: { $in: rounds.map((r) => r._id) } });
+        await Round.deleteMany({ gameId: game._id });
+      }
+
+      await Player.updateMany({ gameId: game._id }, { $set: { score: 0 } });
+
+      game.status = 'waiting';
+      game.currentRound = 0;
+      game.currentQuestion = null;
+      game.usedQuestions = [];
+      game.playersAnswered = 0;
+      game.roundEndsAt = null;
+      game.resultsAt = null;
+      game.pinkCowHolder = null;
+      await game.save();
+
+      const players = await Player.find({ gameId: game._id });
+      io.to(game.roomCode).emit('game_replayed', { gameState: game, players, serverNow: Date.now() });
+    } catch (err) {
+      console.error('play_again error:', err);
+      socket.emit('error', { message: 'Could not start another game.' });
+    }
+  });
+
   socket.on('leave_game', async ({ gameId }) => {
     try {
       const player = await Player.findOne({ gameId, socketId: socket.id });

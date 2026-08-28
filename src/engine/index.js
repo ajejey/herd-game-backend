@@ -34,7 +34,7 @@ export function mountGame(io, namespacePath, gameDef) {
       }
     }
     // Fire-and-forget snapshot so the room survives a server restart.
-    snapshotRoom(namespacePath, roomCode, state, store.tokensForRoom(roomCode));
+    snapshotRoom(namespacePath, roomCode, state, store.tokensForRoom(roomCode), store.settingsFor(roomCode));
   }
 
   // Wrap a socket handler so a thrown error can never crash the process or the
@@ -143,6 +143,8 @@ export function mountGame(io, namespacePath, gameDef) {
       };
 
       store.setGame(roomCode, gameState);
+      /* Kept for play_again, and kept OUT of the state — see store.setSettings. */
+      store.setSettings(roomCode, settings);
       store.setToken(rejoinToken, { roomCode, playerId });
       store.scheduleCleanup(roomCode);
 
@@ -179,7 +181,7 @@ export function mountGame(io, namespacePath, gameDef) {
           // this field existed is protected from the next join onwards rather
           // than staying permanently unguarded.
           if (snap.state && !snap.state.game && snap.namespace) snap.state.game = snap.namespace;
-          store.restoreGame(code, snap.state, snap.tokens);
+          store.restoreGame(code, snap.state, snap.tokens, snap.settings);
           state = store.getGame(code);
         }
       }
@@ -347,6 +349,94 @@ export function mountGame(io, namespacePath, gameDef) {
           });
         }
       }
+    }));
+
+    /*
+      ── Play again, in the room you are already in ───────────────────────────
+
+      Reported by a player on 28 Aug 2026 from a finished Scattergories room:
+      "Cannot force start a new game."
+
+      They were right, and it was true of all fourteen games. Every finished
+      screen offered "Play again" / "New game" as a LINK that called leaveGame()
+      and sent the presser back to the hub to create a fresh room with a fresh
+      code — while everyone else stayed sitting on the final scoreboard, in a
+      room whose host had just walked out. To play a second game a group had to
+      re-form and redistribute a new code, at the exact moment they were most
+      willing to keep playing.
+
+      So the room resets in place: same code, same people, scores back to zero.
+
+      createInitialState is re-run rather than a pristine copy being restored,
+      because it reshuffles — a second game deals fresh questions instead of
+      replaying the ones the room just answered. It is given the room's original
+      settings (store.settingsFor) so the rematch is the same GAME: the same
+      round count, the same timer, the same custom pack. Without that, game two
+      would silently be a different, default game and the pack would look like
+      it had expired.
+    */
+    socket.on('play_again', safe(async ({ roomCode } = {}) => {
+      const code = roomCode?.toUpperCase().trim();
+      const state = store.getGame(code);
+      if (!state) return emitError(socket, 'Room not found', 'ROOM_NOT_FOUND');
+
+      /*
+        Only from a finished game. Mid-game this would be a reset button that
+        wipes everyone's scores, and it is reachable by anyone once the host has
+        dropped — the two together would be a griefing tool.
+      */
+      if (state.status !== 'finished') return;
+
+      const player = state.players.find(p => p.socketId === socket.id);
+      if (!player) return;
+
+      /*
+        The host, or anyone once the host is not connected — the same rule the
+        legacy game uses. A host who closes the tab on the results screen is the
+        normal way a game ends, so gating this on the host alone would leave the
+        room unable to do the one thing it is now for.
+      */
+      const host = state.players.find(p => p.id === state.hostId);
+      if (host?.connected && player.id !== state.hostId) {
+        return emitError(socket, 'Only the host can start another game', 'UNAUTHORIZED');
+      }
+
+      /*
+        Players are rebuilt field by field rather than spread. A game may hang
+        its own per-player bookkeeping off these rows — a team, a turn flag, a
+        used-words list — and spreading would carry the last game's leftovers
+        into the new one, where they would be invisible until they were wrong.
+        isHost is re-derived so it cannot disagree with hostId.
+      */
+      const carried = state.players.map((p) => ({
+        id: p.id,
+        username: p.username,
+        socketId: p.socketId,
+        connected: p.connected,
+        isHost: p.id === state.hostId,
+        score: 0,
+        joinedAt: p.joinedAt,
+      }));
+
+      const fresh = {
+        roomCode: state.roomCode,
+        hostId: state.hostId,
+        status: 'lobby',
+        players: carried,
+        ...gameDef.createInitialState(store.settingsFor(code)),
+        game: state.game || namespacePath,   // set after the spread, as at create
+        createdAt: Date.now(),
+      };
+
+      store.setGame(code, fresh);
+      store.refreshCleanup(code);
+      broadcast(code);
+
+      logEvent('game_replayed', {
+        game: namespacePath,
+        roomCode: code,
+        playerCount: carried.filter((p) => p.connected).length,
+      });
     }));
 
     // ── Kick player (host only) ──────────────────────────────────────────────

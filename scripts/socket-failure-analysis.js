@@ -20,6 +20,20 @@
  *
  * Writes nothing.
  */
+
+/*
+  WHICH EVENTS COUNT AS A SOCKET PROBLEM.
+
+  This script asked for `socket_connect` alone, and commit 8af9e42 retired
+  that name in favour of socket_failed / socket_recovered. It kept running,
+  kept exiting 0, and kept reporting almost nothing — on 28 Aug 2026 it said
+  "2 events from 2 people" for a week in which issues.js counted well over a
+  hundred. A monitor that reads near-zero because it is looking at a dead
+  field is worse than no monitor: it answers "is this bad?" with "no".
+
+  The old name stays in the list so history before the rename still counts.
+*/
+const SOCKET_TYPES = ['socket_failed', 'socket_recovered', 'socket_connect'];
 import 'dotenv/config';
 import mongoose from 'mongoose';
 
@@ -61,7 +75,7 @@ const since = new Date(Date.now() - DAYS * 86400000);
 const rows = await conn
   .collection('client_errors')
   .find(
-    { type: 'socket_connect', createdAt: { $gte: since } },
+    { type: { $in: SOCKET_TYPES }, createdAt: { $gte: since } },
     { projection: { message: 1, page: 1, userAgent: 1, ip: 1, createdAt: 1, _id: 0 } }
   )
   .toArray();
@@ -70,7 +84,7 @@ console.log(`window: last ${DAYS} days (since ${since.toISOString().slice(0, 10)
 `);
 
 if (!rows.length) {
-  console.log('no socket_connect errors recorded.');
+  console.log('no socket errors recorded (looked for: ' + SOCKET_TYPES.join(', ') + ').');
   await mongoose.disconnect();
   process.exit(0);
 }
@@ -120,7 +134,7 @@ const heavyEvents = people.filter((es) => es.length >= 10).reduce((n, es) => n +
 
 const pct = (n, d) => `${((n / d) * 100).toFixed(0)}%`;
 
-console.log(`socket_connect: ${rows.length} events from ${people.length} distinct people (ip+platform)\n`);
+console.log(`${SOCKET_TYPES.join(' + ')}: ${rows.length} events from ${people.length} distinct people (ip+platform)\n`);
 
 console.log('how concentrated:');
 console.log(`  ${oneOff} people hit it exactly once            (${pct(oneOff, people.length)} of people)`);
