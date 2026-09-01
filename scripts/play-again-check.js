@@ -91,6 +91,91 @@ for (const f of walk(path.join(FE, 'components'))) {
 if (liars.length) fail(`${liars.length} control(s) say play-again and leave instead`, liars.join('\n          '));
 else ok(`no control says "play again" while leaving the room (${ROOM_FILES.length} rooms swept)`);
 
+/*
+  ── 1b. one control, one destination ────────────────────────────────────────
+
+  A <Link to={X}> whose onClick handler ALSO navigates has two destinations and
+  silently keeps the wrong one: React Router runs the handler first, then does
+  its own navigation, so the handler's navigate() is dead.
+
+  Shipped exactly that way. Clover, Guesstimate and Say Anything passed
+  `onLeave={() => { leaveGame(); navigate('/clover') }}` into a Link with
+  `backTo="/"`, so "Leave room" quietly started landing on the site hub instead
+  of the game's own page — a silent change in behaviour with nothing broken
+  enough to notice. Caught by /code-review, not by this file, which is why it
+  is now in this file.
+*/
+/*
+  The first version of this rule DID NOT CATCH ITS OWN BUG, which is worse than
+  not having it — a green line reads as coverage.
+
+  It looked for a navigating handler with `backTo=` nearby, within a few hundred
+  characters. For Clover the nearest `backTo=` was 2,447 characters away in a
+  different function, and for Guesstimate and Say Anything it is in a different
+  FILE entirely: the handler lives in the Room, `backTo` lives in the
+  Scoreboard. Proximity cannot see across a file boundary, so the check could
+  never have worked for two of the three cases it was written for. Confirmed by
+  restoring the shipped code and watching it still print ok.
+
+  So the rule is stated without geography instead: a handler passed as
+  onLeave / onPlayAgain / onDone MUST NOT navigate. Those props are handed to
+  components that render their own <Link>, and the Link owns the destination.
+  Leaving handlers leave; navigation is the Link's job. That holds wherever the
+  two halves happen to live.
+*/
+/*
+  A JSX prop's value cannot be read with a regex, because `{}` nests:
+  `onLeave={() => { leaveGame(); navigate('/x'); }}` has an inner brace pair,
+  and a non-greedy match stops at the wrong one. The second attempt at this
+  rule did exactly that and still missed the bug. Balance the braces instead.
+*/
+function propValue(src, openBraceIndex) {
+  let depth = 0;
+  for (let i = openBraceIndex; i < src.length; i += 1) {
+    const c = src[i];
+    if (c === '{') depth += 1;
+    else if (c === '}') {
+      depth -= 1;
+      if (depth === 0) return src.slice(openBraceIndex + 1, i);
+    }
+  }
+  return '';
+}
+
+const doubleDest = [];
+for (const f of walk(path.join(FE, 'components'))) {
+  const src = read(f);
+
+  /* A handler passed as onLeave / onPlayAgain / onDone must not navigate: the
+     component it goes to renders its own <Link>, and the Link owns the
+     destination. No proximity test, so a cross-file split cannot hide it. */
+  for (const m of src.matchAll(/\bon(?:Leave|PlayAgain|Done)=\{/g)) {
+    const open = m.index + m[0].length - 1;
+    if (/\bnavigate\s*\(/.test(propValue(src, open))) {
+      const line = src.slice(0, m.index).split('\n').length;
+      doubleDest.push(
+        `${rel(f)}:${line}  ${m[0].slice(0, -1)} navigates — the Link it is given to owns the destination`);
+    }
+  }
+
+  /* And the single-element version: a <Link to=…> whose own onClick navigates. */
+  for (const m of src.matchAll(/<Link\b[^>]{0,400}?\sonClick=\{/g)) {
+    const open = m.index + m[0].length - 1;
+    const head = src.slice(m.index, open);
+    if (/\sto=/.test(head) && /\bnavigate\s*\(/.test(propValue(src, open))) {
+      const line = src.slice(0, m.index).split('\n').length;
+      doubleDest.push(`${rel(f)}:${line}  a <Link to=…> whose onClick also navigates`);
+    }
+  }
+}
+if (doubleDest.length) {
+  fail(`${doubleDest.length} control(s) have two destinations`,
+    [...new Set(doubleDest)].join('\n          ')
+      + '\n\n          Give the path to the Link, and let the handler just leave.');
+} else {
+  ok('no control has two destinations fighting each other');
+}
+
 /* ── 2. every room offers a real rematch ────────────────────────────────── */
 const noRematch = [];
 for (const f of ROOM_FILES) {

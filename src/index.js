@@ -811,9 +811,21 @@ io.on('connection', (socket) => {
       // Start first round
       game.status = 'in-progress';
       game.currentRound = 1;
-      const firstQuestion = getRandomQuestion([], game.customQuestions);
+      /*
+        Round one excludes what the room has already been asked, and ADDS to
+        that list rather than replacing it.
+
+        This is the only place the exclusion actually happens. play_again keeps
+        usedQuestions on the game document, but keeping it achieved nothing
+        while this line drew with an empty exclusion list and then overwrote
+        the array — so a group who pressed Play again could be handed a
+        question they had just answered, as round one, every time. On a first
+        game `prior` is empty and this behaves exactly as before.
+      */
+      const prior = Array.isArray(game.usedQuestions) ? game.usedQuestions : [];
+      const firstQuestion = getRandomQuestion(prior, game.customQuestions);
       game.currentQuestion = firstQuestion;
-      game.usedQuestions = [firstQuestion];
+      game.usedQuestions = [...prior, firstQuestion];
       game.playersAnswered = 0;
       game.roundEndsAt = new Date(Date.now() + ANSWER_SECONDS * 1000);
       game.resultsAt = null;
@@ -1352,7 +1364,24 @@ io.on('connection', (socket) => {
       game.status = 'waiting';
       game.currentRound = 0;
       game.currentQuestion = null;
-      game.usedQuestions = [];
+      /*
+        usedQuestions is KEPT, not cleared — a rematch has the same people in
+        it, so a question they answered ten minutes ago is not a fresh one.
+
+        Keeping it here is only half the job and was worthless on its own: the
+        exclusion is applied in start_game, which used to draw with an empty
+        list and then overwrite this array. Both halves are needed; see the
+        note there.
+
+        getRandomQuestion recycles once the pool is exhausted rather than
+        throwing, so a group playing many rematches eventually sees repeats
+        instead of an error — the right way round for that trade.
+
+        NOT claimed here: parity with the engine games. Their play_again re-runs
+        createInitialState, which resets usedQuestions to [], so a Guesstimate
+        or Team Trivia rematch can still repeat. Same bug, different file, not
+        fixed in this change.
+      */
       game.playersAnswered = 0;
       game.roundEndsAt = null;
       game.resultsAt = null;
