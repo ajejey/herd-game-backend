@@ -1,3 +1,4 @@
+import { playingRoster } from '../roster.js';
 /*
   Fishbowl (aka Salad Bowl) on the engine.
 
@@ -61,6 +62,8 @@ export const FishbowlGame = {
   },
 
   handleAction(state, action, payload, player) {
+    /* Put returning players back on a team before anything reads the teams. */
+    state = ensureTeamed(state);
     switch (action) {
       case 'submit_words': {
         if (state.phase !== 'submitting') return null;
@@ -150,11 +153,47 @@ export const FishbowlGame = {
     if (state.phase === 'playing' && state.turn && player?.id === state.turn.giverId) {
       return endTurn(state);
     }
+    /*
+      The team whose turn it is has just emptied, so nobody can move: start_turn
+      requires being the current giver, currentGiverId returns null when that
+      team has no connected member, and only endTurn hands play across. The
+      bowl never empties, the round never advances, the room is finished with
+      nobody able to finish it. Same hole as Taboo's, found the same way.
+    */
+    if (state.phase === 'playing' && !state.turn
+        && teamMembers(state, state.currentTeam).length === 0) {
+      return endTurn(state);
+    }
     return null;
   },
 };
 
 // ── helpers ──────────────────────────────────────────────────────────────────
+/*
+  The other half of the team rule: anyone connected who is on no team gets one.
+
+  beginRounds builds the teams from whoever is present, which keeps lobby
+  ghosts out and gets the co-op threshold right. That alone would strand a
+  player who blipped during the countdown, so this puts them back the moment
+  they act — into the smaller team, so a late return cannot lopside the game.
+
+  Lazily applied because the engine has no reconnect hook: a rejoin restores
+  the socket and flips `connected` back on, and nothing tells the game. Every
+  action passing through handleAction is enough.
+*/
+function ensureTeamed(state) {
+  if (!state.teams) return state;
+  const onTeam = new Set([...state.teams.A, ...state.teams.B]);
+  const missing = state.players.filter((p) => p.connected && !onTeam.has(p.id));
+  if (missing.length === 0) return state;
+  const teams = { A: [...state.teams.A], B: [...state.teams.B] };
+  for (const p of missing) {
+    if (state.coop) teams.A.push(p.id);
+    else (teams.A.length <= teams.B.length ? teams.A : teams.B).push(p.id);
+  }
+  return { ...state, teams };
+}
+
 function teamMembers(state, team) {
   // connected members of a team, preserving assignment order
   return state.teams[team].filter((id) => state.players.find((p) => p.id === id && p.connected));
@@ -167,13 +206,35 @@ function currentGiverId(state) {
 }
 
 function beginRounds(state) {
-  const connected = state.players.filter((p) => p.connected);
+  /*
+    Teams come from playingRoster() — here, or away for only a moment — and
+    ensureTeamed() puts back anyone who returns after that. Both obvious
+    answers are wrong, and each has shipped:
+
+    `p.connected` alone strands a player whose socket blipped during the
+    countdown: never a giver, never a guesser, their words still in the bowl,
+    and reconnecting changed nothing because the lists were already written.
+    That is the Clover complaint in a different game.
+
+    `state.players` alone — the first attempt at this fix — hands teams to
+    LOBBY GHOSTS, because that array never shrinks. Six open a lobby, three
+    wander off, three start, and the three who left can be the whole of team A:
+    no connected member, currentGiverId returns null, start_turn needs the
+    giver and end_turn needs a turn, so nobody — host included — has a legal
+    move. The milder and far commoner version is one ghost pushing a real
+    3-player game over the `< 4` threshold, so three people play 2-v-1 against
+    a phantom.
+
+    What separates the two is TIME, which the engine already records as
+    `disconnectedAt`. See games/roster.js.
+  */
+  const roster = playingRoster(state);
   // Fewer than 4 can't make two teams — play co-op: everyone on one team,
   // giver rotates, shared score.
-  const coop = connected.length < 4;
+  const coop = roster.length < 4;
   const teams = { A: [], B: [] };
-  if (coop) connected.forEach((p) => teams.A.push(p.id));
-  else connected.forEach((p, i) => teams[i % 2 === 0 ? 'A' : 'B'].push(p.id));
+  if (coop) roster.forEach((p) => teams.A.push(p.id));
+  else roster.forEach((p, i) => teams[i % 2 === 0 ? 'A' : 'B'].push(p.id));
   const allWords = shuffle(Object.values(state.submissions).flat());
   if (allWords.length === 0) return state; // nothing submitted — can't begin
   return {

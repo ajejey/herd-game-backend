@@ -39,13 +39,23 @@ export const TwoTruthsGame = {
         const eligible = state.players.filter((p) => p.connected);
         const all = eligible.length > 0 && eligible.every((p) => submissions[p.id]);
         const next = { ...state, submissions };
-        if (all) return beginSubjects(next, eligible.map((p) => p.id));
+        /*
+          The subject ORDER is built from whoever SUBMITTED, not from whoever
+          is connected right now. It is written into state once and read for
+          the rest of the game, so a player who wrote their three statements
+          and then blipped used to be dropped from the running order for good
+          — their statements sitting in submissions, never played.
+          startSubjectAt already skips any subject with no submission, so this
+          list is safe to build wide.
+        */
+        if (all) return beginSubjects(next, state.players.filter((p) => submissions[p.id]).map((p) => p.id));
         return next;
       }
 
       case 'force_start': {
         if (state.phase !== 'writing' || player.id !== state.hostId) return null;
-        const ready = state.players.filter((p) => p.connected && state.submissions[p.id]).map((p) => p.id);
+        /* Submitted, not connected — see beginSubjects above. */
+        const ready = state.players.filter((p) => state.submissions[p.id]).map((p) => p.id);
         if (ready.length < 2) return null;
         return beginSubjects(state, ready);
       }
@@ -104,7 +114,7 @@ export const TwoTruthsGame = {
     if (state.phase === 'writing') {
       const eligible = state.players.filter((p) => p.connected);
       const all = eligible.length > 0 && eligible.every((p) => state.submissions[p.id]);
-      if (all) return beginSubjects(state, eligible.map((p) => p.id));
+      if (all) return beginSubjects(state, state.players.filter((p) => state.submissions[p.id]).map((p) => p.id));
     }
     if (state.phase === 'guessing') {
       // if the subject leaves, skip to the next subject

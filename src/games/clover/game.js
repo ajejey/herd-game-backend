@@ -20,9 +20,34 @@ function shuffle(arr) {
   return a;
 }
 
+/*
+  Who gets their clover played — decided by who SUBMITTED one, never by who
+  happens to be connected at this instant.
+
+  Reported by three players in room HRAL on 1 Sep 2026, within ninety seconds
+  of each other, on three different devices:
+
+    "If any person refreshes or is randomly kicked out, when they come back it
+     automatically skips their turn and we get zero points for that turn, as if
+     we got all their words wrong! We love this game, but the glitch is really
+     sad sometimes"
+
+  `resolveOrder` is written into state once, here, and never rebuilt — Clover
+  has no onPlayerDisconnect. So it used to be a permanent record of who was
+  online during one particular millisecond. A socket blip at that moment (there
+  were 1,284 socket events in thirty days) erased a player from the whole
+  resolving phase. They reconnected, `connected` went back to true, and it made
+  no difference: the order was already fixed and their finished clover was
+  never played.
+
+  A submitted clover is completed work. It gets resolved whether or not its
+  author's phone is awake — and if they are away when their turn comes up, the
+  team simply plays it without them, which is what they do anyway: the author
+  is the silent spectator for their own clover.
+*/
 function enterResolving(state) {
   const order = state.players
-    .filter((p) => p.connected && state.clovers[p.id]?.submitted)
+    .filter((p) => state.clovers[p.id]?.submitted)
     .map((p) => p.id);
   if (order.length === 0) return state;
   return { ...state, phase: 'resolving', resolveOrder: order, resolveIndex: 0, placement: [null, null, null, null], revealing: false };
@@ -96,6 +121,21 @@ export const CloverGame = {
           [player.id]: { ...clover, clues: clean, decoy: decoy || null, shuffled: shuffle(five), submitted: true },
         };
 
+        /*
+          This one KEEPS the connected filter, deliberately, and the asymmetry
+          with enterResolving above is the point.
+
+          Here the question is "may we move on?", and a player who has closed
+          their tab must not be able to hold the writing phase open forever —
+          that is the stuck-room failure this codebase has spent a lot of blood
+          on. So a disconnected player does not block the advance.
+
+          There the question is "whose finished work gets played?", and the
+          answer must never depend on who is awake at one instant.
+
+          Read as a pair: absence may cost you your own turn to write, but it
+          can never delete a clover you already wrote.
+        */
         const eligible = state.players.filter((p) => p.connected);
         const allDone = eligible.every((p) => clovers[p.id]?.submitted);
         const next = { ...state, clovers };
