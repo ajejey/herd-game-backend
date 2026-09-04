@@ -10,7 +10,7 @@
     "build": "echo 'No build step needed for backend'",
     "check:banks": "node scripts/content-bank-check.js",
     "check:logic": "node scripts/clover-logic-check.js && node scripts/fishbowl-logic-check.js && node scripts/taboo-logic-check.js && node scripts/herd-scoring-check.js",
-    "check:all": "npm run check:banks && npm run check:logic && npm run check:packcodes && npm run check:crossgame && npm run check:funnel && npm run check:caveman && npm run check:escapes && npm run check:hub && npm run check:resume && npm run check:stuck && npm run check:names && npm run check:blip && npm run check:replay && npm run check:replaylive && npm run check:huematch",
+    "check:all": "npm run check:banks && npm run check:logic && npm run check:packcodes && npm run check:crossgame && npm run check:funnel && npm run check:caveman && npm run check:escapes && npm run check:hub && npm run check:resume && npm run check:stuck && npm run check:names && npm run check:blip && npm run check:replay && npm run check:replaylive && npm run check:roomrescue && npm run check:reaction && npm run check:huematch",
     "check:sockets": "node scripts/join-check.js",
     "check:packcodes": "node scripts/pack-code-check.js",
     "check:crossgame": "node scripts/cross-game-check.js",
@@ -24,6 +24,8 @@
     "check:blip": "node scripts/blip-check.js",
     "check:replay": "node scripts/play-again-check.js",
     "check:replaylive": "node scripts/play-again-live.js",
+    "check:roomrescue": "node scripts/room-code-rescue-check.js",
+    "check:reaction": "node scripts/reaction-rules-check.js",
     "check:hub": "node scripts/hub-listing-check.js",
     "sync:huegrid": "node scripts/sync-huegrid.js",
     "check:huematch": "node scripts/huematch-logic-check.js"

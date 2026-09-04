@@ -35,6 +35,7 @@ import gameStatsRouter from './gameStats.js';
 import hotTakeRouter, { ensureHotTakeIndexes } from './games/hottakes/hotTakeRoutes.js';
 import { ensureRoomIndexes } from './engine/persistence.js';
 import waitlistRouter, { ensureWaitlistIndexes } from './waitlist.js';
+import findRoomRouter from './findRoom.js';
 import pushRouter, { ensurePushIndexes } from './push/pushRoutes.js';
 import feedbackRouter, { ensureFeedbackIndexes } from './feedback.js';
 import packsRouter, { usePack } from './packs.js';
@@ -144,6 +145,8 @@ app.use('/api/hottakes', hotTakeRouter);
 
 // Corporate "Teams Plus" waitlist (willingness-to-pay probe)
 app.use('/api/waitlist', waitlistRouter);
+/* "I have a code, where do I put it?" — see findRoom.js. */
+app.use('/api/find-room', findRoomRouter);
 
 // Android push device tokens (no-op until FCM_* env vars are set)
 app.use('/api/push', pushRouter);
