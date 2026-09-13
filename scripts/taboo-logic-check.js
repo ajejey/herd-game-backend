@@ -104,11 +104,22 @@ function run(N) {
   s4 = TabooGame.handleAction(s4, 'start_turn', {}, nextGiver) || s4;
   const cardAfter = TabooGame.deriveClientState(s4, nextGiverId).card;
 
-  const sameWord = !!cardInPlay && !!cardAfter && cardInPlay.word === cardAfter.word;
-  const cardBurned = !sameWord;
+  /*
+    BOTH CARDS MUST EXIST, and they must differ.
+
+    The first version computed `cardBurned = !sameWord`, which is TRUE when
+    cardAfter is null — and cardAfter is null whenever the next turn failed to
+    start, which start_turn does silently by returning null if the player it is
+    handed is not the current giver. So a turn that never began reported
+    "✓ burned" and the guard could not fail. That is precisely the failure mode
+    this file exists to prevent, reintroduced by the fix for it.
+  */
+  const started = !!cardInPlay && !!cardAfter;
+  const cardBurned = started && cardInPlay.word !== cardAfter.word;
   console.log(
     `     unresolved card at turn end: ${cardInPlay?.word ?? '(none)'} -> next turn: ` +
-    `${cardAfter?.word ?? '(none)'}  ${cardBurned ? '✓ burned' : '✗ REPEATED'}`
+    `${cardAfter?.word ?? '(none)'}  ` +
+    (!started ? '✗ NO CARD DEALT — the guard could not run' : cardBurned ? '✓ burned' : '✗ REPEATED')
   );
 
   return state.status === 'finished' && visibilityOk && cardBurned;
@@ -118,3 +129,11 @@ const only = Number(process.argv[2]);
 const sizes = only ? [only] : [3, 4, 5, 6];
 const ok = sizes.map(run);
 console.log(ok.every(Boolean) ? '\nAll good.' : '\nFAILURES ABOVE.');
+/*
+  This printed "FAILURES ABOVE." and exited 0, so check:logic — which chains on
+  && — stayed green through every failure this file can detect, including the
+  card-repeat guard just added to it. A check that reports a problem and then
+  tells the shell everything is fine is worse than no check, because it is
+  trusted. Same fault found in clover-logic-check.js in the same review.
+*/
+if (!ok.every(Boolean)) process.exitCode = 1;

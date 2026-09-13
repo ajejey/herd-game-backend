@@ -54,3 +54,16 @@ const only = Number(process.argv[2]);
 const sizes = only ? [only] : [3, 4, 5, 6, 8];
 const results = sizes.map(run);
 console.log(results.every(Boolean) ? '\nAll sizes complete correctly.' : '\nSOME SIZES FAILED TO COMPLETE.');
+/*
+  Third script in this directory found printing a failure and exiting 0, so
+  check:logic stayed green through it. Worth stating as the general rule rather
+  than fixing three files and moving on: A CHECK THAT CANNOT FAIL THE SUITE IS
+  DOCUMENTATION, NOT A CHECK — and it is the most dangerous kind, because the
+  green tick is read as evidence.
+
+  Fishbowl is the game this matters most for right now: 25% of started games
+  finished in the 14 days to 13 Sep 2026, against a ~90% norm. If that is a
+  logic fault rather than players quitting, this is the script that would say
+  so, and until now it could only have said it to a log nobody reads.
+*/
+if (!results.every(Boolean)) process.exitCode = 1;

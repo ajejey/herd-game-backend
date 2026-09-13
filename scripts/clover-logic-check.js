@@ -54,6 +54,13 @@ console.log('player actions required for a', N, 'player game:', actions);
 console.log(state.status === 'finished'
   ? '\nRESULT: the game CAN complete. Logic is fine. 0% completion in prod is behavioural (players quit), not a code bug.'
   : '\nRESULT: the game did NOT reach finished — this is a real product bug.');
+/*
+  This branch only printed. check:logic chains on &&, so Clover becoming
+  uncompletable — the exact 0%-completion disaster this script was written for —
+  left `npm run check:all` green. Now that the file has an exit contract from
+  the disconnect guard below, the older and more important half gets one too.
+*/
+if (state.status !== 'finished') process.exitCode = 1;
 
 /*
   ── A clover you finished is played, awake or not ──────────────────────────

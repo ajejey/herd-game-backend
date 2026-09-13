@@ -1421,6 +1421,13 @@ io.on('connection', (socket) => {
       game.roundEndsAt = null;
       game.resultsAt = null;
       game.pinkCowHolder = null;
+      /* Every other end-of-game field is cleared here, and this one has to be
+         cleared with them. It is masked today — the next completion overwrites
+         it, and the client only reads it once the game is finished — but a
+         rematch in progress was otherwise shipping the PREVIOUS game's winner
+         in every join and reconnect payload, waiting for the first caller that
+         trusts winnerId without also checking the status. */
+      game.winnerId = null;
       await game.save();
 
       const players = await Player.find({ gameId: game._id });

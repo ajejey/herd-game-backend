@@ -50,8 +50,16 @@ export function mountGame(io, namespacePath, gameDef) {
     };
   }
 
-  /* `extra` carries the destination for a WRONG_GAME answer — the client can
-     then offer a tap rather than making somebody navigate by hand. */
+  /*
+    `extra` carries the destination for a WRONG_GAME answer.
+
+    NOTHING RENDERS IT YET. Every game's error handler reads `message` and
+    `code` only, so today the player gets the sentence — "That code is for Hue
+    Match" — and navigates by hand. The payload is here because the server is
+    the only thing that knows the path and it costs nothing to send; turning it
+    into a tappable link is a frontend change across thirteen hooks that has not
+    been made. Said plainly so the next reader does not assume a working link.
+  */
   function emitError(socket, message, code = 'ERROR', extra = null) {
     socket.emit('error', { message, code, ...(extra || {}) });
   }
@@ -204,8 +212,17 @@ export function mountGame(io, namespacePath, gameDef) {
           one-line answer, and leaving half a fix in place is how the other
           half gets forgotten. See roomLookup.js.
         */
+        /*
+          `elsewhere` must actually be ELSEWHERE. loadRoom above returns null
+          when a snapshot row has no usable `state`, while lookupRoom matches
+          the same row on its namespace alone — so a damaged snapshot for THIS
+          game would otherwise produce "That code is for Taboo, open Taboo",
+          on the Taboo page. A dead end dressed as a rescue is worse than the
+          dead end, because the player now follows the instruction and arrives
+          back where they started.
+        */
         const elsewhere = await lookupRoom(code);
-        if (elsewhere) {
+        if (elsewhere && elsewhere.namespace !== namespacePath) {
           return emitError(socket, elsewhereMessage(elsewhere), 'WRONG_GAME', { goTo: elsewhere.path, game: elsewhere.game });
         }
         return emitError(socket, 'Room not found. Check your code.', 'ROOM_NOT_FOUND');
