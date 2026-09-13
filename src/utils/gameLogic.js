@@ -158,12 +158,38 @@ export function checkWinCondition(player, pinkCowHolder) {
 
 /**
  * The highest scorer who can actually win right now, or null if nobody can.
- * Ties on score are broken arbitrarily, as they were before.
+ *
+ * ── Ties are NOT broken arbitrarily any more ────────────────────────────────
+ *
+ * Reported by a player on 10 Sep 2026: "two people tied and it showed a
+ * different winner on different screens".
+ *
+ * This used to say ties were "broken arbitrarily, as they were before", and
+ * `reduce((a, b) => a.score > b.score ? a : b)` resolves a tie to the LAST of
+ * the tied players, because the comparison is false when the scores are equal.
+ * GameRoom.js sorted by score and took `ranked[0]`, and Array.sort is stable,
+ * so it resolved the same tie to the FIRST. Two rules, opposite ends of the
+ * same list, and nothing to reconcile them.
+ *
+ * "Arbitrary" is only safe when exactly one place decides. The moment a second
+ * place has to name the same winner, arbitrary means "disagrees", and the
+ * players are the ones who find out.
+ *
+ * So the rule is now total and stateless: highest score, and among equal
+ * scores the lowest id. `_id` is on every player object on both the server and
+ * the client, it never changes, and it does not depend on array order, so any
+ * two pieces of code applying this rule reach the same answer without talking
+ * to each other. Keep it identical to the tiebreak in GameRoom.js.
  */
 export function findWinner(players, pinkCowHolder) {
   const eligible = (players || []).filter(p => checkWinCondition(p, pinkCowHolder));
   if (!eligible.length) return null;
-  return eligible.reduce((a, b) => (a.score > b.score ? a : b));
+  return eligible.reduce((a, b) => {
+    const as = a.score || 0;
+    const bs = b.score || 0;
+    if (as !== bs) return as > bs ? a : b;
+    return String(a._id) <= String(b._id) ? a : b;
+  });
 }
 
 // Get a random question that hasn't been used in the game yet.

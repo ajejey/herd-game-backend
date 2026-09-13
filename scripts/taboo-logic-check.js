@@ -78,7 +78,40 @@ function run(N) {
     (mateId === undefined || mateSees === false) &&
     (oppId === undefined || oppSees === true);
 
-  return state.status === 'finished' && visibilityOk;
+  /*
+    ── A card never survives the turn it was shown in ────────────────────────
+
+    Reported from room KWCU on 9 Sep 2026. Only got/skip/buzz advanced the
+    deck, and none of those is how a turn ENDS — the timer ends it, or the
+    host does. So the card the giver had just spent thirty seconds describing
+    out loud was still at deckIndex when the opposing team started, and they
+    were handed it having already heard the clues.
+
+    Stated generally so it holds for any future way of ending a turn: whatever
+    card was on screen when a turn ended must not be on screen when the next
+    one starts.
+  */
+  let s4 = TabooGame.onStart(mk(N));
+  const gid4 = s4.teams[s4.currentTeam][0];
+  const giver4 = s4.players.find((p) => p.id === gid4);
+  s4 = TabooGame.handleAction(s4, 'start_turn', {}, giver4);
+  const cardInPlay = TabooGame.deriveClientState(s4, gid4).card;
+
+  // End the turn WITHOUT resolving the card — the exact shape the player hit.
+  s4 = TabooGame.handleAction(s4, 'end_turn', {}, giver4);
+  const nextGiverId = s4.teams[s4.currentTeam][s4.giverIndex[s4.currentTeam] % s4.teams[s4.currentTeam].length];
+  const nextGiver = s4.players.find((p) => p.id === nextGiverId);
+  s4 = TabooGame.handleAction(s4, 'start_turn', {}, nextGiver) || s4;
+  const cardAfter = TabooGame.deriveClientState(s4, nextGiverId).card;
+
+  const sameWord = !!cardInPlay && !!cardAfter && cardInPlay.word === cardAfter.word;
+  const cardBurned = !sameWord;
+  console.log(
+    `     unresolved card at turn end: ${cardInPlay?.word ?? '(none)'} -> next turn: ` +
+    `${cardAfter?.word ?? '(none)'}  ${cardBurned ? '✓ burned' : '✗ REPEATED'}`
+  );
+
+  return state.status === 'finished' && visibilityOk && cardBurned;
 }
 
 const only = Number(process.argv[2]);

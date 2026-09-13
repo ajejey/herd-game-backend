@@ -4,6 +4,7 @@ import * as store from './store.js';
 import { logEvent } from '../analytics.js';
 import { snapshotRoom, loadRoom } from './persistence.js';
 import { wrongGameMessage } from './gameDirectory.js';
+import { lookupRoom, elsewhereMessage } from '../roomLookup.js';
 
 const HOST_MIGRATION_DELAY_MS = 20_000; // migrate host after 20s offline
 
@@ -49,8 +50,10 @@ export function mountGame(io, namespacePath, gameDef) {
     };
   }
 
-  function emitError(socket, message, code = 'ERROR') {
-    socket.emit('error', { message, code });
+  /* `extra` carries the destination for a WRONG_GAME answer — the client can
+     then offer a tap rather than making somebody navigate by hand. */
+  function emitError(socket, message, code = 'ERROR', extra = null) {
+    socket.emit('error', { message, code, ...(extra || {}) });
   }
 
   /*
@@ -187,6 +190,24 @@ export function mountGame(io, namespacePath, gameDef) {
       }
 
       if (!state) {
+        /*
+          Before saying it does not exist, ask whether it exists SOMEWHERE.
+
+          The namespace check above covers a code belonging to another ENGINE
+          game, because those rooms carry a namespace. It cannot see the legacy
+          Herd Mentality game, which predates the engine and keeps its rooms in
+          the `games` collection with no namespace at all — so a six-character
+          Herd code typed on a game page fell through to "Room not found".
+
+          Small in volume next to the reverse direction (3 people against 35 in
+          the 30 days to 13 Sep 2026), but it is the same mistake and the same
+          one-line answer, and leaving half a fix in place is how the other
+          half gets forgotten. See roomLookup.js.
+        */
+        const elsewhere = await lookupRoom(code);
+        if (elsewhere) {
+          return emitError(socket, elsewhereMessage(elsewhere), 'WRONG_GAME', { goTo: elsewhere.path, game: elsewhere.game });
+        }
         return emitError(socket, 'Room not found. Check your code.', 'ROOM_NOT_FOUND');
       }
 

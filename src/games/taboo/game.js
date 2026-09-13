@@ -221,6 +221,20 @@ function currentGiverId(state) {
   return members[state.giverIndex[state.currentTeam] % members.length];
 }
 
+/*
+  Move past the card currently in play.
+
+  The recycle lives here rather than at each call site because a deck that runs
+  dry stops dealing cards entirely, and there is more than one way to consume a
+  card now.
+*/
+function nextCard(state) {
+  let deckIndex = state.deckIndex + 1;
+  let deck = state.deck;
+  if (deckIndex >= deck.length) { deck = shuffledDeck(); deckIndex = 0; } // recycle, never run dry
+  return { deck, deckIndex };
+}
+
 // Advance the deck and apply a score delta to the giver's team.
 function scoreCard(state, delta, counters) {
   const team = state.currentTeam;
@@ -231,10 +245,7 @@ function scoreCard(state, delta, counters) {
     skipped: state.turn.skipped + (counters.skipped || 0),
     buzzed: state.turn.buzzed + (counters.buzzed || 0),
   };
-  let deckIndex = state.deckIndex + 1;
-  let deck = state.deck;
-  if (deckIndex >= deck.length) { deck = shuffledDeck(); deckIndex = 0; } // recycle, never run dry
-  return { ...state, teamScores, turn, deck, deckIndex };
+  return { ...state, teamScores, turn, ...nextCard(state) };
 }
 
 function endTurn(state) {
@@ -244,6 +255,27 @@ function endTurn(state) {
     : state.lastTurn;
   const turnsTaken = { ...state.turnsTaken, [team]: state.turnsTaken[team] + 1 };
   const giverIndex = { ...state.giverIndex, [team]: state.giverIndex[team] + 1 };
+
+  /*
+    BURN THE CARD THAT WAS IN PLAY WHEN THE CLOCK RAN OUT.
+
+    Reported by a player in room KWCU on 9 Sep 2026: "when somebodys turn ends
+    in taboo, the next round begins with the same card so the team immediately
+    knows what to guess".
+
+    Only got/skip/buzz advanced the deck, and a turn does not end on any of
+    those — it ends on the timer or on the host. So the card the previous giver
+    had been describing out loud, in the room, to everybody, stayed at
+    deckIndex and was dealt straight to the opposing team. They had just heard
+    it clued. It is a free point, and it happened on every single turn
+    changeover, not in some edge case.
+
+    Only when a turn was actually in progress. endTurn also runs when the giver
+    disconnects mid-turn and when an empty team forfeits (see the callers
+    above); in the forfeit case state.turn is null, nobody has seen the card,
+    and discarding it would throw away a card for nothing.
+  */
+  const dealt = state.turn ? nextCard(state) : { deck: state.deck, deckIndex: state.deckIndex };
 
   const other = team === 'A' ? 'B' : 'A';
   const hasOther = teamMembers(state, other).length > 0;
@@ -272,7 +304,7 @@ function endTurn(state) {
     const winner = state.coop ? null
       : state.teamScores.A === state.teamScores.B ? null
         : state.teamScores.A > state.teamScores.B ? 'A' : 'B';
-    return { ...state, status: 'finished', phase: 'finished', turn: null, lastTurn, turnsTaken, giverIndex, winner };
+    return { ...state, status: 'finished', phase: 'finished', turn: null, lastTurn, turnsTaken, giverIndex, winner, ...dealt };
   }
-  return { ...state, turn: null, lastTurn, turnsTaken, giverIndex, currentTeam: nextTeam };
+  return { ...state, turn: null, lastTurn, turnsTaken, giverIndex, currentTeam: nextTeam, ...dealt };
 }

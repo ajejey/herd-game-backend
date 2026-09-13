@@ -15,6 +15,20 @@ const gameSchema = new mongoose.Schema({
     enum: ['waiting', 'in-progress', 'completed'],
     default: 'waiting'
   },
+  /*
+    WHO WON. Written once, when the game completes.
+
+    The winner used to exist only inside the `game_completed` socket event, so
+    anybody who refreshed or reconnected after the game ended was handed
+    `status: 'completed'` and no winner, and the client worked one out for
+    itself from the scores. That is how two people in the same room saw two
+    different winners on 10 Sep 2026 — one had the server's answer and one had
+    its own, and on a tie they did not match.
+
+    Storing it means the answer survives a refresh, a reconnect, and a server
+    restart, and there is exactly one of it.
+  */
+  winnerId: String,
   currentRound: {
     type: Number,
     default: 0

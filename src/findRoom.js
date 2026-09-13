@@ -1,7 +1,5 @@
 import express from 'express';
-import mongoose from 'mongoose';
-import * as store from './engine/store.js';
-import { describeGame } from './engine/gameDirectory.js';
+import { lookupRoom, CODE } from './roomLookup.js';
 
 /*
   "I have a code, where do I put it?"
@@ -44,13 +42,15 @@ import { describeGame } from './engine/gameDirectory.js';
 
 const router = express.Router();
 
-/* Codes are 4-6 of [A-Z0-9]; anything else is not worth a database round trip. */
-const CODE = /^[A-Z0-9]{4,6}$/;
-
 /*
   A code lookup is cheap but enumerable, so cap it. Generous enough that a
   household or an office behind one NAT address never notices — a person makes
   one of these per invite, not per keystroke, because the client debounces.
+
+  This stayed here rather than moving into roomLookup.js with the rest: the
+  socket join paths are already rate-limited by having to hold a connection,
+  and per-IP throttling is a property of the public HTTP surface, not of the
+  question being asked.
 */
 const HITS = new Map();
 const WINDOW_MS = 60_000;
@@ -71,8 +71,6 @@ setInterval(() => {
   for (const [k, v] of HITS) if (now - v.start > WINDOW_MS) HITS.delete(k);
 }, WINDOW_MS).unref?.();
 
-const db = () => (mongoose.connection?.readyState === 1 ? mongoose.connection : null);
-
 router.get('/:code', async (req, res) => {
   try {
     if (rateLimited((req.ip || '').toString())) return res.status(429).json({ error: 'slow_down' });
@@ -80,31 +78,18 @@ router.get('/:code', async (req, res) => {
     const code = String(req.params.code || '').trim().toUpperCase();
     if (!CODE.test(code)) return res.status(400).json({ error: 'bad_code' });
 
-    /* 1. Live rooms. state.game is the namespace, set at creation. */
-    for (const [roomCode, state] of store.allGames()) {
-      if (roomCode !== code) continue;
-      const dest = describeGame(state?.game);
-      if (dest) return res.json({ code, game: dest.name, path: dest.path, live: true });
-    }
-
-    const conn = db();
-    if (!conn) return res.status(404).json({ error: 'not_found' });
-
-    /* 2. A room that survived a restart. */
-    const snap = await conn.collection('game_rooms').findOne({ roomCode: code });
-    if (snap?.namespace) {
-      const dest = describeGame(snap.namespace);
-      if (dest) return res.json({ code, game: dest.name, path: dest.path, live: false });
-    }
-
     /*
-      3. The original Herd game. It has no namespace because it predates the
-         engine, and its room lives at /game/CODE rather than /<game>/room/CODE
-         — so the path is built differently on purpose, not by oversight.
+      The three-store lookup moved to roomLookup.js so the socket join paths
+      could use it too — see the note there. This route is now one of three
+      callers rather than the only one, and there is a single implementation
+      to keep correct.
     */
-    const legacy = await conn.collection('games').findOne({ roomCode: code });
-    if (legacy) {
-      return res.json({ code, game: 'Herd Mentality', path: `/game/${code}`, live: false, direct: true });
+    const found = await lookupRoom(code);
+    if (found) {
+      return res.json({
+        code: found.code, game: found.game, path: found.path,
+        live: found.live, ...(found.direct ? { direct: true } : {}),
+      });
     }
 
     return res.status(404).json({ error: 'not_found' });

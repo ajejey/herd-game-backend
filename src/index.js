@@ -36,6 +36,7 @@ import hotTakeRouter, { ensureHotTakeIndexes } from './games/hottakes/hotTakeRou
 import { ensureRoomIndexes } from './engine/persistence.js';
 import waitlistRouter, { ensureWaitlistIndexes } from './waitlist.js';
 import findRoomRouter from './findRoom.js';
+import { lookupRoom, elsewhereMessage } from './roomLookup.js';
 import pushRouter, { ensurePushIndexes } from './push/pushRoutes.js';
 import feedbackRouter, { ensureFeedbackIndexes } from './feedback.js';
 import packsRouter, { usePack } from './packs.js';
@@ -463,7 +464,7 @@ async function completeRound(game, round) {
   // 8 points and not holding the cow — see findWinner in gameLogic.js.
   const winner = findWinner(updatedPlayers, newPinkCowHolder);
   if (winner) {
-    await Game.findByIdAndUpdate(game._id, { status: 'completed' });
+    await Game.findByIdAndUpdate(game._id, { status: 'completed', winnerId: String(winner._id) });
     io.to(game.roomCode).emit('game_completed', { winner });
   }
   return true;
@@ -630,6 +631,30 @@ io.on('connection', (socket) => {
       const name = String(username || '').trim();
       const game = await Game.findOne({ roomCode: code });
       if (!game) {
+        /*
+          THE CODE MAY BE FINE, AND FOR A DIFFERENT GAME.
+
+          Herd Mentality issues SIX character codes. The engine games issue
+          FOUR. In the 30 days to 13 Sep 2026, 35 people typed a four-character
+          code into this box and were told "Game not found" — it was a live
+          Scattergories or Hue Match room, and their friends were sitting in it
+          waiting. Telling somebody holding a working code that it does not
+          exist is the worst answer available: they check the code, retype it,
+          and give up, because nothing suggests the problem is the page.
+
+          The engine has said "That code is for Taboo, not this game" since the
+          wrong-game fix. This game predates the engine and never learned to.
+        */
+        const elsewhere = await lookupRoom(code);
+        if (elsewhere) {
+          socket.emit('error', {
+            message: elsewhereMessage(elsewhere),
+            code: 'WRONG_GAME',
+            goTo: elsewhere.path,
+            game: elsewhere.game,
+          });
+          return;
+        }
         socket.emit('error', { message: 'Game not found' });
         return;
       }
@@ -709,6 +734,10 @@ io.on('connection', (socket) => {
         currentRound: game.currentRound,
         currentQuestion: game.currentQuestion,
         gameStatus: game.status,
+        /* Who won, for a player arriving after the game ended. Without it the
+           client computed its own answer and disagreed with everyone who was
+           still connected — see winnerId in models/Game.js. */
+        winnerId: game.winnerId || null,
         pinkCowHolder: game.pinkCowHolder,
         playersAnswered: game.playersAnswered
       };
@@ -1087,7 +1116,7 @@ io.on('connection', (socket) => {
       // Re-run win check after adjustment
       const winner = findWinner(players, game.pinkCowHolder);
       if (winner) {
-        await Game.findByIdAndUpdate(gameId, { status: 'completed' });
+        await Game.findByIdAndUpdate(gameId, { status: 'completed', winnerId: String(winner._id) });
         io.to(game.roomCode).emit('game_completed', { winner });
       }
     } catch (error) {
@@ -1147,7 +1176,7 @@ io.on('connection', (socket) => {
       // Same rule as the end of a round, and now literally the same function.
       const winner = findWinner(players, holder);
       if (winner) {
-        await Game.findByIdAndUpdate(gameId, { status: 'completed' });
+        await Game.findByIdAndUpdate(gameId, { status: 'completed', winnerId: String(winner._id) });
         io.to(game.roomCode).emit('game_completed', { winner });
       }
     } catch (error) {
@@ -1270,6 +1299,9 @@ io.on('connection', (socket) => {
           currentRound: game.currentRound,
           currentQuestion: game.currentQuestion,
           gameStatus: game.status,
+          /* Same reason as join_game: a refresh after the final round must be
+             told who won, not left to work it out. */
+          winnerId: game.winnerId || null,
           players,
           pinkCowHolder: game.pinkCowHolder,
           playersAnswered: rp.playersAnswered,

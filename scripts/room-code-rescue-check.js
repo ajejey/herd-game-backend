@@ -48,7 +48,14 @@ console.log('=== nobody with a room code hits a dead end ===');
   is('the room lookup is mounted', /app\.use\('\/api\/find-room'/.test(index),
     'nothing serves /api/find-room, so the search box has nothing to ask');
 
-  const finder = fs.readFileSync(path.join(HERE, '..', 'src', 'findRoom.js'), 'utf8');
+  /*
+    The three-store lookup moved out of findRoom.js into roomLookup.js on
+    13 Sep 2026, so that the socket join handlers could use it too and stop
+    telling people a working code did not exist. These assertions follow the
+    IMPLEMENTATION rather than the route — findRoom.js is now one caller of
+    three, and the thing that must keep checking all three stores is the module.
+  */
+  const finder = fs.readFileSync(path.join(HERE, '..', 'src', 'roomLookup.js'), 'utf8');
   /*
     Three sources, and the in-memory one matters most: persistence is debounced,
     so a room created seconds ago exists ONLY in memory — and a room created
@@ -60,8 +67,15 @@ console.log('=== nobody with a room code hits a dead end ===');
   is('...and the snapshot, so a room survives a restart', /game_rooms/.test(finder));
   is('...and the legacy Herd collection', /collection\('games'\)/.test(finder));
   is('...and refuses anything that is not code-shaped', /\^\[A-Z0-9\]\{4,6\}\$/.test(finder));
+  /* Rate limiting stayed in findRoom.js when the lookup moved out — it guards
+     the public HTTP surface, not the question. Asserted against the ROUTE for
+     that reason. A refactor once deleted the limiter's definition here while
+     leaving the call, which is a ReferenceError on every request AND the loss
+     of the enumeration guard, so this checks both halves. */
+  const route = fs.readFileSync(path.join(HERE, '..', 'src', 'findRoom.js'), 'utf8');
   is('...and is rate limited, because codes are short and enumerable',
-    /rateLimited/.test(finder));
+    /function rateLimited/.test(route) && /rateLimited\(/.test(route) && /429/.test(route),
+    'the limiter must be defined here, called here, and answer 429');
 }
 
 /* ── The search box asks ──────────────────────────────────────────────────── */
@@ -154,6 +168,90 @@ console.log('=== nobody with a room code hits a dead end ===');
   */
   is('every mounted game is in the directory, so its codes can be found',
     missing.length === 0, missing.join(', '));
+}
+
+/* ── The JOIN boxes, not just the search box ──────────────────────────────── */
+/*
+  The invariant at the top of this file says EVERY route that takes a code from
+  a person must be able to recognise one. When it was written, "every route"
+  meant the search box and the ?join= links. It missed the place people
+  actually type a code: the join box on a game page.
+
+  Error data for the 30 days to 13 Sep 2026:
+
+      page "herd", FOUR-character code, "Game not found"   -> 35 people
+      engine page, SIX-character code, "Room not found"    ->  3 people
+
+  Herd Mentality issues six-character codes and the engine games issue four, so
+  a four-character code in the Herd join box is never a Herd code — it is a
+  live room in another game. Those 35 people were told their working code did
+  not exist.
+
+  The engine had solved half of this already (a code for another ENGINE game
+  gets "That code is for Taboo, not this game"), which is why the gap survived:
+  the half that worked made it look finished. The legacy game could not see
+  engine rooms and the engine could not see legacy rooms, because the only
+  cross-store lookup lived inside an Express handler.
+
+  Asserted on the source rather than against a live server so it runs in the
+  same second as the rest of the suite, and so it fails on the DELETION of the
+  lookup rather than only on a room that happens to exist while the test runs.
+*/
+{
+  const BE = path.join(HERE, '..', 'src');
+  const read = (...p) => {
+    try { return fs.readFileSync(path.join(BE, ...p), 'utf8'); } catch { return ''; }
+  };
+
+  const lookup = read('roomLookup.js');
+  const legacy = read('index.js');
+  const engine = read('engine', 'index.js');
+
+  is('a single cross-store lookup exists',
+    /export async function lookupRoom/.test(lookup),
+    'roomLookup.js is what lets a join path answer "it is not here, it is there"');
+
+  is('...and it checks all three places a room can live',
+    /store\.allGames\(\)/.test(lookup)
+    && /game_rooms/.test(lookup)
+    && /collection\('games'\)/.test(lookup),
+    'live memory, the snapshot, and the legacy collection — miss one and that game goes dark');
+
+  /* The search box was the first caller and must stay on the shared one, or
+     the two implementations drift and only one of them gets the next fix. */
+  is('...and the search box uses it rather than its own copy',
+    /lookupRoom/.test(read('findRoom.js')) && !/collection\('games'\)/.test(read('findRoom.js')),
+    'two copies of this logic is how half of it gets fixed');
+
+  /*
+    The real assertion: neither join path may say "not found" without having
+    asked. Checked as "the lookup is called in the same handler", which is what
+    breaks if somebody deletes the call while keeping the error.
+  */
+  /*
+    Anchored on the EMIT, not on the message text. The first version searched
+    for the bare phrase "Game not found" and matched it inside the comment that
+    explains the fix, which sits above the lookup — so the slice ended before
+    the call it was looking for and the check failed against code that was
+    correct. Match the line that actually refuses the player.
+  */
+  const before = (src, emitNeedle, startNeedle) => {
+    const from = src.indexOf(startNeedle);
+    const at = src.indexOf(emitNeedle, from);
+    return from === -1 || at === -1 ? '' : src.slice(from, at);
+  };
+
+  is('the Herd join box asks where a code belongs before refusing it',
+    /lookupRoom\(/.test(before(legacy, "socket.emit('error', { message: 'Game not found' })", "socket.on('join_game'")),
+    'a four-character code here is an engine room, and 35 people were told it did not exist');
+
+  is('...and so does every engine game',
+    /lookupRoom\(/.test(before(engine, "'Room not found. Check your code.', 'ROOM_NOT_FOUND'", "socket.on('join_game'")),
+    'the reverse direction is rarer but it is the same mistake');
+
+  is('...and both name the game rather than just saying no',
+    /elsewhereMessage/.test(legacy) && /elsewhereMessage/.test(engine),
+    '"that code is for Hue Match" is a one-tap problem; "not found" is a dead end');
 }
 
 console.log('');

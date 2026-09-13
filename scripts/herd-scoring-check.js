@@ -283,5 +283,55 @@ await withAnswers(
   },
 );
 
+/*
+  ── A tie names ONE winner, and it is the same one every time ──────────────
+
+  From a player report on 10 Sep 2026: "two people tied and it showed a
+  different winner on different screens".
+
+  findWinner reduced with `a.score > b.score`, which is false on equal scores,
+  so it kept the LAST tied player. GameRoom.js sorted by score and took the
+  first, and Array.sort is stable, so it kept the FIRST. One tie, two rules,
+  opposite ends of the list.
+
+  The general statement, which is what this asserts: the winner must be a pure
+  function of the PLAYERS, never of the order they arrive in. Shuffling the
+  list must not change the answer. That holds for any future caller, including
+  the client, without either side having to know about the other.
+*/
+{
+  const mkP = (id, score) => ({ _id: id, username: id, score });
+  const tied = [mkP('ccc', 9), mkP('aaa', 9), mkP('bbb', 9)];
+
+  const permutations = [
+    [0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0],
+  ].map((order) => order.map((i) => tied[i]));
+
+  const winners = permutations.map((list) => findWinner(list, null)?._id);
+  const distinct = [...new Set(winners)];
+
+  if (distinct.length !== 1) {
+    fail(`a tie picks a different winner depending on list order: ${winners.join(', ')}`);
+  } else {
+    ok(`a tie names one winner whatever order the players are in (${distinct[0]})`);
+  }
+
+  /* And it must be the rule the client applies: lowest id among equal scores.
+     If this ever changes, change the tiebreak in GameRoom.js in the same
+     commit — a silent divergence here is invisible until two players compare
+     screens. */
+  if (distinct[0] !== 'aaa') {
+    fail(`the tiebreak is not "lowest id" — got ${distinct[0]}, GameRoom.js expects aaa`);
+  } else {
+    ok('...and it is the lowest id, matching the client tiebreak');
+  }
+
+  /* A real difference in score must still beat the tiebreak, or the lowest id
+     would simply always win. */
+  const clear = findWinner([mkP('zzz', 12), mkP('aaa', 9)], null);
+  if (clear?._id !== 'zzz') fail('a higher score lost to the tiebreak');
+  else ok('a higher score still wins outright');
+}
+
 console.log(failures ? `\n${failures} FAILURE(S)\n` : '\nAll checks passed.\n');
 process.exit(failures ? 1 : 0);
