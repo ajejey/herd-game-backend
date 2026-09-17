@@ -24,7 +24,7 @@
 */
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const COMPONENTS = path.join(HERE, '..', '..', 'frontend', 'src', 'components');
@@ -112,12 +112,18 @@ const HOOKS = path.join(HERE, '..', '..', 'frontend', 'src', 'hooks');
 const SESSION_LIB = path.join(HERE, '..', '..', 'frontend', 'src', 'lib', 'roomSession.js');
 
 is('the shared rejoin guard exists', fs.existsSync(SESSION_LIB), 'frontend/src/lib/roomSession.js');
-if (fs.existsSync(SESSION_LIB)) {
-  const lib = fs.readFileSync(SESSION_LIB, 'utf8');
-  is('...and a home page with no room in the URL still resumes',
-    /if \(!inUrl\) return true;/.test(lib),
-    'otherwise a backgrounded tab loses its game, which is what auto-rejoin is FOR');
-}
+/*
+  "...and a home page with no room in the URL still resumes" used to be asserted
+  here by grepping for the literal line `if (!inUrl) return true;`. It is now
+  asserted by CALLING shouldRejoinSession at the bottom of this file, which is
+  the same claim without depending on how the function happens to be spelt.
+
+  Worth saying why, because the regex version did its job on the way out: the
+  ?pack= fix rewrote that line, the grep went red, and it made the change
+  visible instead of silent. But a check that fails on a correct refactor is a
+  check people learn to edit rather than read, and the next person would have
+  matched the new spelling and moved on.
+*/
 
 let hooksChecked = 0;
 for (const f of fs.readdirSync(HOOKS)) {
@@ -131,6 +137,71 @@ for (const f of fs.readdirSync(HOOKS)) {
 }
 is('every room hook was checked', hooksChecked >= 13, `${hooksChecked} found`);
 
+/* ── A link that asks for something beats a remembered room ───────────────── */
+
+/*
+  16 Sep 2026, team-trivia DSHE: "I am trying to open this pack:
+  QOUNT-TRICK-OR-TRIVIA-AZS. But every time I do, it continues to start me in
+  some random trivia I started before."
+
+  They were describing shouldRejoinSession. /team-trivia?pack=... has no room
+  code in the PATH, so the rule called it a front door and resumed their old
+  room; the pack they had been sent was never opened. ?join= had the same hole
+  — somebody sends you a room, and you land in a different one.
+
+  This is the SAME defect the room-in-the-path check was written for. It simply
+  never looked past the path, so an instruction carried in the query string
+  walked straight through it.
+
+  Run rather than grepped. The regex version of this assertion would pass on
+  the comment that explains it — which is how a source-level check quietly
+  stops checking anything.
+*/
+const { shouldRejoinSession } = await import(
+  pathToFileURL(path.join(HERE, '..', '..', 'frontend', 'src', 'lib', 'roomSession.js')).href
+);
+
+const SESSION = { rejoinToken: 't', roomCode: 'OLDR' };
+
+is('an ordinary front door still resumes the remembered room',
+  shouldRejoinSession(SESSION, '/team-trivia', '') === true,
+  'a phone that reloads a backgrounded tab has to land back in the game');
+
+is('a ?pack= link is opened, not overridden by the last room',
+  shouldRejoinSession(SESSION, '/team-trivia', '?pack=QOUNT-TRICK-OR-TRIVIA-AZS') === false,
+  'this is the QOUNT report: the pack never opens because the old room wins');
+
+is('a ?join= link for a DIFFERENT room does not resume the old one',
+  shouldRejoinSession(SESSION, '/team-trivia', '?join=ABCD') === false,
+  'somebody sent them a room and they would land in a different one');
+
+/*
+  AND THE OTHER HALF, which the first version of this fix got wrong and which
+  this check briefly asserted as correct.
+
+  Treating any ?join= as "do not rejoin" locks a player out of their OWN game.
+  Reopening the invite link still sitting in the group chat — /taboo?join=ABCD
+  while in room ABCD — would suppress the rejoin, hand them the join form, and
+  the engine answers GAME_IN_PROGRESS because join_game refuses a room that has
+  left the lobby. Permanently out, by clicking the link to the game they are in.
+
+  A join code names a room, so it gets compared, exactly as a room in the path
+  is compared. That is what makes this assertion the pair of the one above
+  rather than its opposite.
+*/
+is('a ?join= link for the room they are ALREADY in still resumes',
+  shouldRejoinSession(SESSION, '/team-trivia', '?join=OLDR') === true,
+  'reopening the invite link to your own game must not lock you out of it');
+
+is('...and the comparison is case-insensitive',
+  shouldRejoinSession(SESSION, '/team-trivia', '?join=oldr') === true,
+  'links get lower-cased by chat apps and by people typing them');
+
+is('a room in the path still wins over both',
+  shouldRejoinSession(SESSION, '/team-trivia/room/OLDR', '') === true
+  && shouldRejoinSession(SESSION, '/team-trivia/room/NEWR', '') === false,
+  'the original fix must survive the new one');
+
 console.log('');
 if (failures) { console.log(`resume room — ${failures} problem(s)`); process.exit(1); }
-console.log('resume room — "Play again" starts a new game on every one of them');
+console.log('resume room — "Play again" starts a new game, and a link beats a remembered room');

@@ -125,7 +125,71 @@ export const TabooGame = {
 
       case 'end_turn': {
         if (!state.turn) return null;
-        if (player.id !== state.turn.giverId && player.id !== state.hostId) return null;
+
+        /*
+          ANYONE MAY END A TURN WHOSE CLOCK HAS RUN OUT.
+
+          There is no server timer in this engine: clients count down to
+          `deadline` and the turn ends when somebody says so. Only the GIVER
+          was allowed to say so, and that made the whole room depend on one
+          person's browser still running a setInterval.
+
+          It does not always. Mobile browsers freeze timers when the screen
+          locks or the tab goes to the background — and Taboo is the game where
+          that is most likely, because the giver is TALKING, not looking at
+          their phone. The clock hits zero, their tab is asleep, nobody else is
+          permitted to advance, and the room sits at 0s for ever. Two people
+          reported exactly that from room BJZD within a minute of each other on
+          17 Sep: "timer gets stuck at zero" and "the round reached 0 but
+          didn't continue to the next round". A dropped end_turn packet did the
+          same thing, because the client had no reason to send a second one.
+
+          What follows is how that is made safe.
+        */
+        /*
+          WHICH TURN, AND WHO IS ASKING.
+
+          ── The turn it saw ───────────────────────────────────────────────
+
+          socket.io BUFFERS emits made while disconnected and flushes them all
+          on reconnect. A client sitting at 0s retries every four seconds; if
+          its network drops for half a minute, eight end_turn actions queue up
+          and arrive together — after the room has moved on and a new turn has
+          started. Each would be judged against the CURRENT turn, and the fresh
+          one would die instantly, burning a card each time.
+
+          So every send names the deadline it was looking at. A request about a
+          turn that is no longer the turn is simply not about this turn. An
+          older client that sends no deadline still works, which is what makes
+          a frontend-first deploy safe.
+
+          ── Automatic ends are gated on the clock, for EVERY seat ─────────
+
+          Every client now auto-sends at its own zero, and `secondsLeft` is
+          computed from the device's own clock. The host used to be exempt from
+          the expiry check because only a deliberate press could ever reach it;
+          now that the host's browser fires automatically too, that exemption
+          would let one phone with a fast clock silently cut every turn in the
+          room short. No seat is exempt from an automatic end: the host's clock
+          is no more trustworthy than anyone else's.
+
+          A deliberate press is the opposite case and keeps its exemption —
+          the giver or the host choosing to finish early is a real thing they
+          do, and they are pressing a button that says so.
+        */
+        const seen = Number(payload?.deadline);
+        const deadline = Number(state.turn.deadline || 0);
+        if (Number.isFinite(seen) && seen !== deadline) return null;
+
+        const expired = Date.now() >= deadline;
+        if (payload?.auto === true) {
+          if (!expired) return null;
+          return endTurn(state);
+        }
+
+        const mayEndEarly = player.id === state.turn.giverId || player.id === state.hostId;
+        if (!expired && !mayEndEarly) return null;
+
         return endTurn(state);
       }
 

@@ -74,7 +74,19 @@ function walk(dir, out = []) {
 */
 const ROOM_FILES = walk(path.join(FE, 'components'))
   .filter((f) => /Room\.js$|\/(gt|sa|clover)\/Scoreboard\.js$/.test(f.replace(/\\/g, '/')))
-  .filter((f) => !/PlayAgain/.test(path.basename(f)));
+  /*
+    A room screen lives in its own game's folder. components/common holds the
+    shared CONTROLS a room is built from, and asking one of those to offer a
+    rematch is asking the wrong component: PlayAgain is the rematch, and
+    LeaveRoom is the exit.
+
+    This was `!/PlayAgain/.test(basename)` — a name, so it excluded exactly one
+    file and nothing else. Adding LeaveRoom.js to common/ broke this check
+    immediately, because "LeaveRoom.js" ends in "Room.js" and the filter above
+    matched it as a thirteenth game. The folder is the real distinction and it
+    does not need editing again for the next shared control.
+  */
+  .filter((f) => !/\/components\/common\//.test(f.replace(/\\/g, '/')));
 
 /* ── 1. no control lies about what it does ──────────────────────────────── */
 const liars = [];
