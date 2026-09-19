@@ -137,3 +137,93 @@ console.log(ok.every(Boolean) ? '\nAll good.' : '\nFAILURES ABOVE.');
   trusted. Same fault found in clover-logic-check.js in the same review.
 */
 if (!ok.every(Boolean)) process.exitCode = 1;
+
+/* ── One card, one resolution ─────────────────────────────────────────────── */
+
+/*
+  18 Sep 2026, room ZZSN: "multiple people buzzing at the same time all take
+  effect and skip multiple words."
+
+  got_word, skip_word and buzz all consume the CURRENT card, and none of them
+  said which card they meant. Three opponents tapping Buzz on the same card
+  arrive as three actions: the first resolves the card they saw, the next two
+  resolve cards nobody has read. Two words burned, three points lost for one
+  slip.
+
+  The rule: an action names the card it was looking at, and the server ignores
+  it once the room has moved on.
+*/
+{
+  const N = 4;
+  let s = TabooGame.onStart(mk(N));
+  const gid = s.teams[s.currentTeam][0];
+  const giver = s.players.find((p) => p.id === gid);
+  s = TabooGame.handleAction(s, 'start_turn', {}, giver);
+
+  const card = s.deckIndex;
+  const opposing = s.currentTeam === 'A' ? 'B' : 'A';
+  const rivals = s.teams[opposing].map((id) => s.players.find((p) => p.id === id));
+
+  /* Everyone on the other team buzzes the SAME card, as fast as they can tap. */
+  let after = s;
+  let applied = 0;
+  for (const r of rivals) {
+    const next = TabooGame.handleAction(after, 'buzz', { cardIndex: card }, r);
+    if (next) { after = next; applied += 1; }
+  }
+
+  const burned = after.deckIndex - card;
+  const lost = s.teamScores[s.currentTeam] - after.teamScores[s.currentTeam];
+  console.log(`\n  simultaneous buzz: ${rivals.length} rivals buzzed card ${card}`);
+  console.log(`    cards consumed = ${burned} (want 1), points lost = ${lost} (want 1), actions applied = ${applied}`);
+  if (burned !== 1 || lost !== 1) {
+    console.log('  FAIL  a card was resolved more than once — this is the ZZSN report');
+    process.exitCode = 1;
+  } else {
+    console.log('  ok    one card, one buzz, one point');
+  }
+
+  /* And a stale tap — one that names a card the room has passed — is ignored. */
+  const stale = TabooGame.handleAction(after, 'got_word', { cardIndex: card }, giver);
+  if (stale !== null) {
+    console.log('  FAIL  an action naming an old card was accepted');
+    process.exitCode = 1;
+  } else {
+    console.log('  ok    an action naming a card the room has passed is ignored');
+  }
+
+  /* A client that sends no cardIndex still works, so a backend-first deploy
+     does not break the version already in people's browsers. */
+  const legacy = TabooGame.handleAction(after, 'got_word', {}, giver);
+  if (legacy === null) {
+    console.log('  FAIL  a client that sends no cardIndex was refused');
+    process.exitCode = 1;
+  } else {
+    console.log('  ok    a client that sends no cardIndex is unaffected');
+  }
+}
+
+/* ── A rematch is a different game ────────────────────────────────────────── */
+
+/*
+  18 Sep 2026, room ZZSN: "if you start a new game then the order of the people
+  taking a turn is not randomised and is the same."
+
+  The roster arrives in join order and teams were dealt i % 2, so the same
+  people got the same teams and the same person always described first, for
+  every game that group ever played.
+*/
+{
+  const seen = new Set();
+  for (let i = 0; i < 40; i += 1) {
+    const s = TabooGame.onStart(mk(6));
+    seen.add(JSON.stringify(s.teams.A) + '|' + s.teams[s.currentTeam][0]);
+  }
+  console.log(`\n  rematch seating: ${seen.size} distinct arrangements in 40 starts`);
+  if (seen.size < 5) {
+    console.log('  FAIL  the same people get the same teams and the same first giver every game');
+    process.exitCode = 1;
+  } else {
+    console.log('  ok    teams and the opening giver vary between games');
+  }
+}

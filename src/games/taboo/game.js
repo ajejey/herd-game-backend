@@ -20,6 +20,16 @@ import { playingRoster } from '../roster.js';
 const DEFAULT_TURN_SEC = 60;
 const DEFAULT_ROUNDS = 3; // turns per team
 
+/* Fisher-Yates on a copy. The caller's array is the live roster. */
+function shuffle(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
 export const TabooGame = {
   minPlayers: 3,
 
@@ -68,7 +78,25 @@ export const TabooGame = {
       What separates the two is TIME, which the engine already records as
       `disconnectedAt`. See games/roster.js.
     */
-    const roster = playingRoster(state);
+    /*
+      SHUFFLED, so a rematch is a different game.
+
+      18 Sep 2026, room ZZSN: "if you start a new game then the order of the
+      people taking a turn is not randomised and is the same".
+
+      Exactly right. The roster arrives in JOIN order and teams were dealt
+      `i % 2`, so the same five people always got the same two teams; then
+      giverIndex resets to {A:0, B:0} and currentTeam to 'A', so the same
+      person always described first. Play three games in a row and it is the
+      same seating every time — which in a party game reads as the product
+      being broken, and quietly means the last player in the join order never
+      goes first however long the group plays.
+
+      Shuffled here rather than in playingRoster(), because that function's job
+      is deciding WHO is playing and it is shared with the reconnect path;
+      re-ordering it there would move people between teams mid-game.
+    */
+    const roster = shuffle(playingRoster(state));
     const coop = roster.length < 4;
     const teams = { A: [], B: [] };
     if (coop) roster.forEach((p) => teams.A.push(p.id));
@@ -94,6 +122,31 @@ export const TabooGame = {
   handleAction(state, action, payload, player) {
     /* Put returning players back on a team before anything reads the teams. */
     state = ensureTeamed(state);
+
+    /*
+      ONE CARD, ONE RESOLUTION.
+
+      18 Sep 2026, room ZZSN: "multiple people buzzing at the same time all
+      take effect and skip multiple words."
+
+      Every one of got_word, skip_word and buzz consumes the CURRENT card —
+      scoreCard() calls nextCard() — and none of them said which card they
+      meant. Three opponents looking at the same card and tapping Buzz within a
+      second of each other arrive as three separate actions: the first resolves
+      the card they saw, the second resolves the card AFTER it, the third the
+      one after that. Two cards nobody ever read are burned and the team loses
+      three points instead of one. The same shape double-taps a "Got it" into
+      two points for one word.
+
+      So an action now names the card it was looking at, and the server ignores
+      it if the room has moved on. Same rule as end_turn naming its deadline.
+
+      A client that sends no cardIndex is unchanged, which is what makes a
+      backend-first deploy safe.
+    */
+    const wrongCard = Number.isFinite(Number(payload?.cardIndex))
+      && Number(payload.cardIndex) !== state.deckIndex;
+
     switch (action) {
       case 'start_turn': {
         if (state.phase !== 'playing' || state.turn) return null;
@@ -103,11 +156,13 @@ export const TabooGame = {
 
       case 'got_word': {
         if (!state.turn || player.id !== state.turn.giverId) return null;
+        if (wrongCard) return null;
         return scoreCard(state, +1, { got: 1 });
       }
 
       case 'skip_word': {
         if (!state.turn || player.id !== state.turn.giverId) return null;
+        if (wrongCard) return null;
         return scoreCard(state, 0, { skipped: 1 });
       }
 
@@ -120,6 +175,7 @@ export const TabooGame = {
         if (player.id === state.turn.giverId) return null;
         const opposing = state.currentTeam === 'A' ? 'B' : 'A';
         if (!state.teams[opposing]?.includes(player.id)) return null;
+        if (wrongCard) return null;
         return scoreCard(state, -1, { buzzed: 1 });
       }
 
