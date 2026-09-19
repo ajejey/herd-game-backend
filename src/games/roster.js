@@ -59,3 +59,29 @@ export function inTheGame(player, now = Date.now()) {
 export function playingRoster(state, now = Date.now()) {
   return (state.players || []).filter((p) => inTheGame(p, now));
 }
+
+/**
+ * Fisher-Yates on a copy.
+ *
+ * Lives here, beside playingRoster, because every caller that wants it wants it
+ * for the same reason: to seat a roster without letting join order decide who
+ * plays with whom or who goes first. A player reported that determinism as a
+ * bug on 18 Sep 2026 ("if you start a new game then the order of the people
+ * taking a turn is not randomised and is the same"), and the fix belongs in
+ * every team game, not the one that was reported.
+ *
+ * Six byte-identical private copies of this existed across the games when that
+ * fix landed. A seventh was about to be written for Fishbowl.
+ *
+ * @template T
+ * @param {T[]} arr
+ * @returns {T[]} a new array; the input is untouched
+ */
+export function shuffled(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}

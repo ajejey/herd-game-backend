@@ -1,4 +1,4 @@
-import { playingRoster } from '../roster.js';
+import { playingRoster, shuffled } from '../roster.js';
 /*
   Fishbowl (aka Salad Bowl) on the engine.
 
@@ -23,12 +23,6 @@ import { playingRoster } from '../roster.js';
 const DEFAULT_WORDS = 2;
 const DEFAULT_TURN_SEC = 45;
 const ROUND_NAMES = { 1: 'Describe it (no saying the word)', 2: 'Act it out (no words)', 3: 'One word only' };
-
-function shuffle(arr) {
-  const a = [...arr];
-  for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
-  return a;
-}
 
 export const FishbowlGame = {
   // 3, not 4. A third of all Fishbowl rooms filled to 2-3 players and could
@@ -64,6 +58,29 @@ export const FishbowlGame = {
   handleAction(state, action, payload, player) {
     /* Put returning players back on a team before anything reads the teams. */
     state = ensureTeamed(state);
+
+    /*
+      ONE WORD, ONE RESOLUTION — the same rule as taboo/game.js.
+
+      got_word and skip_word both consume the front of the bowl and neither
+      said WHICH word it meant, so a double-tapped "Got it!" scored twice for
+      one word and burned a word nobody read, and a burst of emits flushed from
+      socket.io's offline buffer on reconnect did the same several times over.
+
+      Reported against Taboo from room ZZSN on 18 Sep 2026 ("multiple people
+      buzzing at the same time all take effect and skip multiple words"), and
+      fixed there first. It is the same defect here: TESTING.md is binding and
+      says a bug that reaches a user becomes an invariant for every game, not a
+      fix in the one that was reported. Fishbowl has the lowest completion rate
+      on the site, so it is the last game that should keep it.
+
+      `bowlSize` names the bowl the client was looking at, which is the only
+      identity a shared bowl has. A client that sends none is unchanged, so a
+      backend-first deploy is safe.
+    */
+    const namedBowl = payload?.bowlSize;
+    const wrongWord = Number.isInteger(namedBowl) && namedBowl !== (state.bowl || []).length;
+
     switch (action) {
       case 'submit_words': {
         if (state.phase !== 'submitting') return null;
@@ -95,6 +112,7 @@ export const FishbowlGame = {
       case 'got_word': {
         if (state.phase !== 'playing' || !state.turn || player.id !== state.turn.giverId) return null;
         if (state.bowl.length === 0) return null;
+        if (wrongWord) return null;
         const team = state.currentTeam;
         const teamScores = { ...state.teamScores, [team]: state.teamScores[team] + 1 };
         const bowl = state.bowl.slice(1);
@@ -110,6 +128,7 @@ export const FishbowlGame = {
       case 'skip_word': {
         if (state.phase !== 'playing' || !state.turn || player.id !== state.turn.giverId) return null;
         if (state.bowl.length <= 1) return null; // nothing to skip to
+        if (wrongWord) return null;
         const bowl = [...state.bowl.slice(1), state.bowl[0]];
         return { ...state, bowl };
       }
@@ -291,14 +310,23 @@ function beginRounds(state) {
     What separates the two is TIME, which the engine already records as
     `disconnectedAt`. See games/roster.js.
   */
-  const roster = playingRoster(state);
+  /*
+    SHUFFLED, so a rematch is a different game — the same fix as taboo.
+
+    The roster arrives in JOIN order and teams were dealt `i % 2`, so the same
+    group got the same two teams and the same opening giver every single game,
+    and whoever joined last never went first however long they played. That is
+    verbatim the 18 Sep 2026 report from room ZZSN, which was about Taboo; this
+    is the same defect in the game with the site's lowest completion rate.
+  */
+  const roster = shuffled(playingRoster(state));
   // Fewer than 4 can't make two teams — play co-op: everyone on one team,
   // giver rotates, shared score.
   const coop = roster.length < 4;
   const teams = { A: [], B: [] };
   if (coop) roster.forEach((p) => teams.A.push(p.id));
   else roster.forEach((p, i) => teams[i % 2 === 0 ? 'A' : 'B'].push(p.id));
-  const allWords = shuffle(Object.values(state.submissions).flat());
+  const allWords = shuffled(Object.values(state.submissions).flat());
   if (allWords.length === 0) return state; // nothing submitted — can't begin
   return {
     ...state,
@@ -338,5 +366,5 @@ function advanceRound(state) {
         : state.teamScores.A > state.teamScores.B ? 'A' : 'B';
     return { ...finishedTurn, status: 'finished', roundType: 3, bowl: [], winner };
   }
-  return { ...finishedTurn, roundType: nextRound, bowl: shuffle(state.allWords) };
+  return { ...finishedTurn, roundType: nextRound, bowl: shuffled(state.allWords) };
 }

@@ -332,6 +332,31 @@ export function mountGame(io, namespacePath, gameDef) {
         return emitError(socket, 'Only the host can start the game', 'UNAUTHORIZED');
       }
 
+      /*
+        A GAME THAT HAS STARTED CANNOT BE STARTED AGAIN.
+
+        onStart is a full reset: it rebuilds the teams, zeroes the scores and
+        deals a fresh deck. Running it on a live room was survivable while
+        seating was deterministic — the same people came back to the same teams
+        and only the scores were lost. Taboo now SHUFFLES on start (a player
+        reported the old fixed seating as a bug), so a second start_game would
+        randomly re-seat everyone mid-turn, wipe the scores and vanish the card
+        somebody is describing.
+
+        Reachable without any malice: the host double-taps Start on a phone —
+        the lobby only disappears after the state_update round-trip, so the
+        button is live for that whole window — or socket.io flushes a buffered
+        start_game after a blip.
+
+        join_game forty lines up already refuses anything that is not a lobby.
+        start_game never did, and the shuffle is what turned that from untidy
+        into destructive. Guarded here, in the engine, so it holds for all
+        thirteen games rather than in the one that exposed it.
+      */
+      if (state.status !== 'lobby') {
+        return emitError(socket, 'This game has already started', 'ALREADY_STARTED');
+      }
+
       const minPlayers = gameDef.minPlayers ?? 3;
       const connected = state.players.filter(p => p.connected);
       if (connected.length < minPlayers) {
@@ -454,6 +479,24 @@ export function mountGame(io, namespacePath, gameDef) {
         isHost: p.id === state.hostId,
         score: 0,
         joinedAt: p.joinedAt,
+        /*
+          WHEN they dropped, not just THAT they dropped.
+
+          This list is deliberately rebuilt field by field rather than spread,
+          so that last game's leftovers cannot leak into the new one — and
+          `disconnectedAt` was missed. Dropping it collapses the 45-second blip
+          grace to nothing for the rematch: playingRoster() asks
+          `typeof disconnectedAt === 'number'`, which is false once the field is
+          gone, so somebody whose screen locked three seconds before the host
+          pressed Play again is judged never to have been here and is left out
+          of the new roster entirely.
+
+          In a four-player Taboo room that silently drops it to three, which is
+          co-op — no teams, no buzz button, a different game from the one they
+          just played. Carrying the timestamp lets roster.js make that call on
+          the facts it was designed around.
+        */
+        disconnectedAt: p.disconnectedAt,
       }));
 
       const fresh = {

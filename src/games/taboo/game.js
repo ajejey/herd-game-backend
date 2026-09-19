@@ -1,5 +1,5 @@
 import { shuffledDeck } from './tabooCards.js';
-import { playingRoster } from '../roster.js';
+import { playingRoster, shuffled } from '../roster.js';
 
 /*
   Taboo on the engine.
@@ -19,16 +19,6 @@ import { playingRoster } from '../roster.js';
 */
 const DEFAULT_TURN_SEC = 60;
 const DEFAULT_ROUNDS = 3; // turns per team
-
-/* Fisher-Yates on a copy. The caller's array is the live roster. */
-function shuffle(arr) {
-  const a = [...arr];
-  for (let i = a.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [a[i], a[j]] = [a[j], a[i]];
-  }
-  return a;
-}
 
 export const TabooGame = {
   minPlayers: 3,
@@ -96,7 +86,7 @@ export const TabooGame = {
       is deciding WHO is playing and it is shared with the reconnect path;
       re-ordering it there would move people between teams mid-game.
     */
-    const roster = shuffle(playingRoster(state));
+    const roster = shuffled(playingRoster(state));
     const coop = roster.length < 4;
     const teams = { A: [], B: [] };
     if (coop) roster.forEach((p) => teams.A.push(p.id));
@@ -144,8 +134,19 @@ export const TabooGame = {
       A client that sends no cardIndex is unchanged, which is what makes a
       backend-first deploy safe.
     */
-    const wrongCard = Number.isFinite(Number(payload?.cardIndex))
-      && Number(payload.cardIndex) !== state.deckIndex;
+    /*
+      A REAL INTEGER, or no opinion at all.
+
+      This was `Number.isFinite(Number(payload?.cardIndex))`, and Number()
+      coerces: null, '' and false all become 0. A client that sent
+      `cardIndex: null` would therefore be judged to mean "card 0" and have
+      EVERY got_word, skip_word and buzz silently dropped for the rest of the
+      turn — no error, no feedback, a giver tapping a dead button. Nothing
+      sends null today; the point is that a guard which fails closed on
+      malformed input must not fail closed on absent input.
+    */
+    const named = payload?.cardIndex;
+    const wrongCard = Number.isInteger(named) && named !== state.deckIndex;
 
     switch (action) {
       case 'start_turn': {

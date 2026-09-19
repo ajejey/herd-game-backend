@@ -128,15 +128,25 @@ function run(N) {
 const only = Number(process.argv[2]);
 const sizes = only ? [only] : [3, 4, 5, 6];
 const ok = sizes.map(run);
-console.log(ok.every(Boolean) ? '\nAll good.' : '\nFAILURES ABOVE.');
+if (!ok.every(Boolean)) process.exitCode = 1;
 /*
+  THE VERDICT IS PRINTED AT THE BOTTOM OF THIS FILE, not here.
+
+  It used to print here, and then three more blocks were added below it — so
+  removing the card guard produced "All good." followed immediately by "FAIL a
+  card was resolved more than once". The exit code was right and the words were
+  wrong, which is this file's own documented fault one step removed: it lied to
+  the person reading the log instead of to the shell.
+
+  The original fault is kept below because it is why the exit code is set on its
+  own line rather than alongside the message.
+
   This printed "FAILURES ABOVE." and exited 0, so check:logic — which chains on
   && — stayed green through every failure this file can detect, including the
   card-repeat guard just added to it. A check that reports a problem and then
   tells the shell everything is fine is worse than no check, because it is
   trusted. Same fault found in clover-logic-check.js in the same review.
 */
-if (!ok.every(Boolean)) process.exitCode = 1;
 
 /* ── One card, one resolution ─────────────────────────────────────────────── */
 
@@ -227,3 +237,31 @@ if (!ok.every(Boolean)) process.exitCode = 1;
     console.log('  ok    teams and the opening giver vary between games');
   }
 }
+
+/*
+  A guard that fails closed on malformed input must not fail closed on ABSENT
+  input. Number() coerces null, '' and false to 0, so the first version of the
+  card guard read `cardIndex: null` as "card 0" and would have silently dropped
+  every got/skip/buzz for the rest of a turn — no error, a giver tapping a dead
+  button. Nothing sends null today; this is here so nothing ever can.
+*/
+{
+  let s = TabooGame.onStart(mk(4));
+  const gid = s.teams[s.currentTeam][0];
+  const giver = s.players.find((p) => p.id === gid);
+  s = TabooGame.handleAction(s, 'start_turn', {}, giver);
+  /* Move off card 0 so a coerced-to-0 payload would be visibly wrong. */
+  s = TabooGame.handleAction(s, 'got_word', {}, giver);
+
+  const sloppy = [['null', null], ['empty string', ''], ['false', false], ['undefined', undefined]];
+  let bad = 0;
+  for (const [label, value] of sloppy) {
+    const next = TabooGame.handleAction(s, 'got_word', { cardIndex: value }, giver);
+    if (next === null) { console.log(`  FAIL  cardIndex: ${label} was treated as a real card and refused`); bad += 1; }
+  }
+  if (bad) process.exitCode = 1;
+  else console.log('  ok    a malformed cardIndex is ignored, not read as card 0');
+}
+
+/* ── The verdict, after every block above has actually run ────────────────── */
+console.log(process.exitCode ? '\nFAILURES ABOVE.' : '\nAll good.');
